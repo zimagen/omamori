@@ -14,7 +14,7 @@ From the repository root, with the Garmin SDK and Java installed:
 . ~/.local/opt/ciq-env.sh
 mkdir -p watch/bin
 python3 watch/tools/generate_vectors.py --check
-monkeyc -d venu445mm -f watch/monkey.jungle -o watch/bin/omamori.prg \
+monkeyc -d venu445mm -f watch/monkey.jungle -o watch/bin/omamori-venu445mm.prg \
   -y ~/.local/share/omamori-dev/developer_key.der -w
 monkeyc -d venu441mm -f watch/monkey.jungle -o watch/bin/omamori-venu441mm.prg \
   -y ~/.local/share/omamori-dev/developer_key.der -w
@@ -34,13 +34,17 @@ copy the correct device's `.prg` into **GARMIN/APPS**. Disconnect USB and
 open **Omamori** from the watch's apps.
 
 Assign Omamori to a button hold at **Settings > System > Shortcuts** on the
-watch. Launching the app immediately scans and authenticates. A lock request
+watch. With no paired PCs, launching the app goes straight to pairing mode.
+Otherwise, it immediately scans for paired PCs and authenticates. A lock request
 without confirmation is approved automatically, vibrates briefly on success,
 and exits after about 1.5 seconds when there are no remaining requests.
 
-Hold the menu button for **Pair PC**, **Refresh**, or **Paired PCs**. For first
-pairing, start `sudo omamori pair` on the PC, then choose **Pair PC** on the
-watch. Compare the six digits on both screens. Tap to accept; Back rejects.
+When idle or showing an error, tap the screen or press START to open the menu
+for **Pair PC**, **Refresh**, or **Paired PCs**. The menu gesture is also
+supported where available. START never confirms pairing or approves a request.
+For first pairing, start `sudo omamori pair` on the PC and launch the watch app.
+To pair another PC, choose **Pair PC** from the menu.
+Compare the six digits on both screens. Tap to accept; Back rejects.
 Confirm on the PC too. The watch saves the host only after authenticating its
 positive PairResult. Pair rejection is sent with a valid MAC before disconnect.
 

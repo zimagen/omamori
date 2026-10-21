@@ -18,7 +18,7 @@ class OmamoriView extends WatchUi.View {
     function onUpdate(dc) {
         dc.setColor(Graphics.COLOR_WHITE,Graphics.COLOR_BLACK);dc.clear();width=dc.getWidth();var height=dc.getHeight();
         dc.drawText(width/2,28,Graphics.FONT_SMALL,"Omamori",Graphics.TEXT_JUSTIFY_CENTER);
-        var list=owner.visible() as Array<Entry>;var body=owner.status;var foot="Hold menu for options";
+        var list=owner.visible() as Array<Entry>;var body=owner.status;var foot="Tap for menu";
         if(owner.code!=null) {if(shownCode==null || !shownCode.equals(owner.code)) {page=0;}shownCode=owner.code;shownPairSession=owner.session;shownId=null;body=owner.code+"\n"+owner.pairHost+"\nCompare with your PC";foot="Tap accept • Back reject";}
         else if(list.size()>0) {
             if(current>=list.size()) {current=0;}
@@ -39,7 +39,12 @@ class OmamoriView extends WatchUi.View {
     function tap() {
         if(page<pages-1) {page++;WatchUi.requestUpdate();return;}
         if(shownCode!=null && owner.code!=null && shownCode.equals(owner.code) && shownPairSession.equals(owner.session)) {owner.confirm(true);shownCode=null;return;}
-        if(shownId!=null) {owner.tap(shownId,shownHash,shownNonce);shownId=null;page=0;}
+        if(shownId!=null) {owner.tap(shownId,shownHash,shownNonce);shownId=null;page=0;return;}
+        menuIfIdle();
+    }
+    function menuIfIdle() {
+        if(page<pages-1 || shownCode!=null || shownId!=null || owner.code!=null || owner.visible().size()>0) {return;}
+        owner.menu();
     }
     function next(delta) {var list=owner.visible() as Array<Entry>;if(list.size()>0) {current=(current+delta+list.size())%list.size();page=0;shownId=null;WatchUi.requestUpdate();}}
 }
@@ -47,7 +52,8 @@ class OmamoriInput extends WatchUi.BehaviorDelegate {
     var owner;var view;
     function initialize(o,v) {BehaviorDelegate.initialize();owner=o;view=v;}
     function onTap(evt) {view.tap();return true;}
-    // Deliberately no onSelect approval: approvals require an explicit touch.
+    // START only opens the idle menu; approvals require an explicit touch.
+    function onSelect() {view.menuIfIdle();return true;}
     function onSwipe(evt) {view.next(evt.getDirection()==WatchUi.SWIPE_RIGHT?-1:1);return true;}
     function onMenu() {owner.menu();return true;}
     function onBack() {if(owner.code!=null) {owner.confirm(false);}else {owner.exit();}return true;}

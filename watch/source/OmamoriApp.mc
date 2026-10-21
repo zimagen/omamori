@@ -14,7 +14,7 @@ class OmamoriApp extends Application.AppBase {
         launchTimer.start(method(:launch),100,false);
         return [view,new OmamoriInput(self,view)];
     }
-    function launch() {begin(false);}
+    function launch() {begin(Store.hosts().size()==0);}
     function begin(pair) {
         exitTimer.stop();finish=false;rejecting=false;code=null;pairHost=null;
         if(session!=null) {session.close();}session=null;
@@ -67,7 +67,7 @@ class OmamoriApp extends Application.AppBase {
         code=null;status=message;WatchUi.requestUpdate();exitTimer.start(method(:exit),2500,false);
     }
     function exitIfDone() {if(!menuOpen && session!=null && !session.waiting && session.inflight.size()==0 && session.entries.size()==0 && !session.more) {exit();}}
-    function exit() {if(ble!=null) {ble.stop();}System.exit();}
+    function exit() {if(menuOpen) {return;}if(ble!=null) {ble.stop();}System.exit();}
     function onStop(state) {launchTimer.stop();exitTimer.stop();if(session!=null) {session.close();}if(ble!=null) {ble.stop();}}
     function showMenu(title as String,items as Array<MenuRow>,action as String) {
         menuOpen=true;exitTimer.stop();var m=new WatchUi.Menu2({:title=>title});
