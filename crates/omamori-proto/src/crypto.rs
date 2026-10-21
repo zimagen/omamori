@@ -130,9 +130,7 @@ pub fn pending_mac(key: &Key, watch_nonce: &Nonce, message_before_mac: &[u8]) ->
 }
 
 pub fn approve_mac(key: &Key, host_id: &HostId, watch_nonce: &Nonce, entry: &Entry) -> Mac {
-    let title = crate::wire::truncate_str(&entry.title);
-    let detail = crate::wire::truncate_str(&entry.detail);
-    let contents = sha256(&[title.as_bytes(), &[0], detail.as_bytes()]);
+    let contents = contents_hash(entry);
     hmac_sha256(
         key,
         &[
@@ -146,14 +144,32 @@ pub fn approve_mac(key: &Key, host_id: &HostId, watch_nonce: &Nonce, entry: &Ent
     )
 }
 
+pub fn contents_hash(entry: &Entry) -> Mac {
+    let title = crate::wire::truncate_to(&entry.title, 48).as_bytes();
+    let detail = crate::wire::truncate_to(&entry.detail, 160).as_bytes();
+    sha256(&[
+        &(title.len() as u16).to_be_bytes(),
+        title,
+        &(detail.len() as u16).to_be_bytes(),
+        detail,
+    ])
+}
+
 pub fn result_mac(key: &Key, watch_nonce: &Nonce, req_id: &RequestId, status: u8) -> Mac {
     hmac_sha256(key, &[b"omamori/v1/result", watch_nonce, req_id, &[status]])
 }
 
-pub fn watch_confirm_mac(key: &Key, transcript: &Mac) -> Mac {
-    hmac_sha256(key, &[b"omamori/v1/pair-ok/watch", transcript])
+pub fn watch_confirm_mac(key: &Key, transcript: &Mac, accepted: bool) -> Mac {
+    hmac_sha256(
+        key,
+        &[
+            b"omamori/v1/pair-ok/watch",
+            transcript,
+            &[u8::from(accepted)],
+        ],
+    )
 }
 
 pub fn host_confirm_mac(key: &Key, transcript: &Mac) -> Mac {
-    hmac_sha256(key, &[b"omamori/v1/pair-ok/host", transcript])
+    hmac_sha256(key, &[b"omamori/v1/pair-ok/host", transcript, &[1]])
 }

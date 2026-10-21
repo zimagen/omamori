@@ -326,3 +326,64 @@ fn long_utf8_fields_match_watch_but_changes_beyond_wire_boundary_invalidate() {
         assert_status(&out, 1);
     }
 }
+
+#[test]
+fn embedded_nul_contents_have_distinct_macs() {
+    let mut a = entry(1, Kind::Sudo, true, 0);
+    a.title = "a\0b".into();
+    a.detail = "c".into();
+    let mut b = a.clone();
+    b.title = "a".into();
+    b.detail = "b\0c".into();
+    let mac = |e| crypto::approve_mac(&Key::new([2; 32]), &[1; 16], &[3; 16], e);
+    assert_ne!(mac(&a), mac(&b));
+}
+
+#[test]
+fn maximum_queue_is_paginated_oldest_first_and_refresh_drains_it() {
+    let mut rng = Rng(781);
+    let mut host = host::Session::authenticated([1; 16], &"h".repeat(255), Key::new([2; 32]));
+    host.set_pending(
+        (1..=16)
+            .map(|id| Entry {
+                title: "🦀".repeat(64),
+                detail: "🦀".repeat(64),
+                ..entry(id, Kind::Sudo, true, u16::from(id))
+            })
+            .collect(),
+    )
+    .unwrap();
+    let (mut watch, mut hello) =
+        watch::Session::authenticated([1; 16], Key::new([2; 32]), &mut rng);
+    let mut seen = Vec::new();
+    loop {
+        let pending = host.receive(&hello.messages[0], &mut rng).unwrap();
+        assert!(pending.messages[0].len() <= 1024);
+        let Message::Pending { entries, more, .. } = Message::decode(&pending.messages[0]).unwrap()
+        else {
+            panic!()
+        };
+        if seen.is_empty() {
+            assert!(more);
+        }
+        assert!(
+            entries
+                .iter()
+                .all(|e| e.title.len() == 48 && e.detail.len() == 160)
+        );
+        watch.receive(&pending.messages[0]).unwrap();
+        assert_eq!(watch.more(), more);
+        for e in entries {
+            seen.push(e.req_id[0]);
+            let tap = watch.tap(e.req_id).unwrap();
+            let result = host.receive(&tap.messages[0], &mut rng).unwrap();
+            assert_status(&result, 0);
+            watch.receive(&result.messages[0]).unwrap();
+        }
+        if !more {
+            break;
+        }
+        hello = watch.refresh(&mut rng).unwrap();
+    }
+    assert_eq!(seen, (1..=16).rev().collect::<Vec<_>>());
+}

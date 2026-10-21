@@ -1,0 +1,36 @@
+[package]
+name = "omamori-daemon"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "omamorid"
+path = "src/main.rs"
+
+[features]
+default = []
+test-harness = []
+
+[dependencies]
+omamori-proto = { path = "../omamori-proto" }
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+serde_json.workspace = true
+toml = "0.8"
+nix = { version = "0.29", features = ["user", "fs"] }
+rand_core.workspace = true
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+clap = { version = "4", features = ["derive"] }
+bluer = { version = "0.17", features = ["bluetoothd"] }
+futures = "0.3"
+async-trait = "0.1"
+anyhow = "1"
+uuid = "1"
+zeroize.workspace = true
+
+[dev-dependencies]
+tempfile = "3"
+tokio = { version = "1", features = ["test-util"] }

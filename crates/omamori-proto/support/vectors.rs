@@ -65,6 +65,7 @@ pub fn generate() -> Value {
     let mut pending = Message::Pending {
         host_id,
         host_name: "omamori-pc".into(),
+        more: false,
         entries: vec![entry.clone()],
         mac: [0; 32],
     }
@@ -89,7 +90,7 @@ pub fn generate() -> Value {
     }
     .encode()
     .unwrap();
-    let watch_confirm_mac = crypto::watch_confirm_mac(&key, &th);
+    let watch_confirm_mac = crypto::watch_confirm_mac(&key, &th, true);
     let host_confirm_mac = crypto::host_confirm_mac(&key, &th);
     json!({
         "version": 1,
@@ -109,7 +110,7 @@ pub fn generate() -> Value {
         "approval": {
             "req_id": hex(&entry.req_id), "kind": entry.kind as u8, "needs_confirm": entry.needs_confirm,
             "age_s": entry.age_s, "title": entry.title, "detail": entry.detail,
-            "contents_hash": hex(&crypto::sha256(&[entry.title.as_bytes(), &[0], entry.detail.as_bytes()])),
+            "contents_hash": hex(&crypto::contents_hash(&entry)),
             "pending_before_mac": hex(&before_mac), "pending_mac": hex(&pending_mac), "pending_message": hex(&pending),
             "approve_mac": hex(&approve_mac), "approve_message": hex(&approve), "result_status": 0,
             "result_mac": hex(&result_mac), "result_message": hex(&result)

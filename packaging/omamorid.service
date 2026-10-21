@@ -1,0 +1,38 @@
+[Unit]
+Description=Omamori watch approval daemon
+After=bluetooth.service
+Wants=bluetooth.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/omamorid
+Restart=on-failure
+User=root
+Group=root
+RuntimeDirectory=omamori
+RuntimeDirectoryMode=0755
+StateDirectory=omamori
+StateDirectoryMode=0700
+ConfigurationDirectory=omamori
+ConfigurationDirectoryMode=0755
+UMask=0077
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RestrictAddressFamilies=AF_UNIX AF_BLUETOOTH
+CapabilityBoundingSet=
+SystemCallArchitectures=native
+# AF_UNIX and the system bus remain available for org.bluez over D-Bus.
+ReadWritePaths=/var/lib/omamori /run/omamori
+
+[Install]
+WantedBy=multi-user.target

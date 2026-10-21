@@ -133,15 +133,33 @@ impl Session {
                     return Err(wire::Error::State);
                 }
                 self.nonce = Some(watch_nonce);
-                let entries: Vec<_> = self
+                let mut entries: Vec<_> = self
                     .pending
                     .values()
                     .filter(|e| !self.approved.contains(&e.req_id))
                     .cloned()
                     .collect();
+                entries.sort_by_key(|e| (std::cmp::Reverse(e.age_s), e.req_id));
+                let mut size = 2 + 16 + 1 + self.host_name.len() + 2 + 32;
+                let count = entries
+                    .iter()
+                    .take_while(|e| {
+                        let len = 14
+                            + wire::truncate_to(&e.title, 48).len()
+                            + wire::truncate_to(&e.detail, 160).len();
+                        if size + len > crate::framing::MAX_MESSAGE {
+                            return false;
+                        }
+                        size += len;
+                        true
+                    })
+                    .count();
+                let more = count < entries.len();
+                entries.truncate(count);
                 let mut message = Message::Pending {
                     host_id: self.host_id,
                     host_name: self.host_name.clone(),
+                    more,
                     entries: entries.clone(),
                     mac: [0; 32],
                 };
@@ -263,7 +281,7 @@ impl Session {
                 if pair.derived.is_some() && pair.watch_accept.is_none() =>
             {
                 let (key, th, _) = pair.derived.as_ref().ok_or(wire::Error::State)?;
-                if !crypto::constant_time_eq(&mac, &crypto::watch_confirm_mac(key, th)) {
+                if !crypto::constant_time_eq(&mac, &crypto::watch_confirm_mac(key, th, accepted)) {
                     return Ok(self.fail_pair(PairFailure::BadMac));
                 }
                 if !accepted {

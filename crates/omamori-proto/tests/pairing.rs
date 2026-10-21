@@ -206,3 +206,15 @@ fn unexpected_or_malformed_pair_message_fails_closed() {
         [watch::Event::PairFailed(PairFailure::Protocol)]
     ));
 }
+
+#[test]
+fn rejection_cannot_be_flipped_to_acceptance() {
+    let (mut host, mut watch, mut rng) = exchange();
+    host.confirm_pairing(true).unwrap();
+    let mut confirm = watch.confirm_pairing(false).unwrap().messages.remove(0);
+    confirm[2] = 1;
+    assert_host_failed(
+        &host.receive(&confirm, &mut rng).unwrap(),
+        PairFailure::BadMac,
+    );
+}

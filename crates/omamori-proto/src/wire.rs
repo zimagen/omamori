@@ -44,8 +44,8 @@ pub struct Entry {
 impl Entry {
     /// Canonical contents actually displayed by a v1 peer.
     pub fn canonicalize(&mut self) {
-        self.title = truncate_str(&self.title).to_owned();
-        self.detail = truncate_str(&self.detail).to_owned();
+        self.title = truncate_to(&self.title, 48).to_owned();
+        self.detail = truncate_to(&self.detail, 160).to_owned();
     }
     pub(crate) fn same_request(&self, other: &Self) -> bool {
         self.req_id == other.req_id
@@ -80,6 +80,7 @@ pub enum Message {
     Pending {
         host_id: HostId,
         host_name: String,
+        more: bool,
         entries: Vec<Entry>,
         mac: Mac,
     },
@@ -104,7 +105,11 @@ pub enum Message {
 }
 
 pub fn truncate_str(value: &str) -> &str {
-    let mut len = value.len().min(255);
+    truncate_to(value, 255)
+}
+
+pub fn truncate_to(value: &str, limit: usize) -> &str {
+    let mut len = value.len().min(limit);
     while !value.is_char_boundary(len) {
         len -= 1;
     }
@@ -133,6 +138,13 @@ impl<'a> Reader<'a> {
             1 => Ok(true),
             _ => Err(Error::Value),
         }
+    }
+    fn limited_string(&mut self, max: usize) -> Result<String, Error> {
+        let value = self.string()?;
+        if value.len() > max {
+            return Err(Error::Value);
+        }
+        Ok(value)
     }
     fn string(&mut self) -> Result<String, Error> {
         let len = usize::from(self.byte()?);
@@ -178,20 +190,22 @@ impl Message {
             Self::Pending {
                 host_id,
                 host_name,
+                more,
                 entries,
                 mac,
             } => {
                 out.push(0x81);
                 out.extend_from_slice(host_id);
                 encode_str(host_name, &mut out);
+                out.push(u8::from(*more));
                 out.push(u8::try_from(entries.len()).map_err(|_| Error::Value)?);
                 for entry in entries {
                     out.extend_from_slice(&entry.req_id);
                     out.push(entry.kind as u8);
                     out.push(u8::from(entry.needs_confirm));
                     out.extend_from_slice(&entry.age_s.to_be_bytes());
-                    encode_str(&entry.title, &mut out);
-                    encode_str(&entry.detail, &mut out);
+                    encode_str(truncate_to(&entry.title, 48), &mut out);
+                    encode_str(truncate_to(&entry.detail, 160), &mut out);
                 }
                 out.extend_from_slice(mac);
             }
@@ -266,6 +280,7 @@ impl Message {
             0x81 => {
                 let host_id = r.bytes()?;
                 let host_name = r.string()?;
+                let more = r.boolean()?;
                 let count = r.byte()?;
                 let mut entries = Vec::with_capacity(usize::from(count));
                 for _ in 0..count {
@@ -278,13 +293,14 @@ impl Message {
                         },
                         needs_confirm: r.boolean()?,
                         age_s: u16::from_be_bytes(r.bytes()?),
-                        title: r.string()?,
-                        detail: r.string()?,
+                        title: r.limited_string(48)?,
+                        detail: r.limited_string(160)?,
                     });
                 }
                 Self::Pending {
                     host_id,
                     host_name,
+                    more,
                     entries,
                     mac: r.bytes()?,
                 }

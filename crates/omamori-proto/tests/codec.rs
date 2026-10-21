@@ -32,6 +32,7 @@ fn messages() -> Vec<Message> {
         Message::Pending {
             host_id: [8; 16],
             host_name: "PC".into(),
+            more: false,
             entries: vec![
                 entry(1, Kind::Lock, false, 0),
                 entry(2, Kind::Sudo, true, u16::MAX),
@@ -41,6 +42,7 @@ fn messages() -> Vec<Message> {
         Message::Pending {
             host_id: [8; 16],
             host_name: "".into(),
+            more: false,
             entries: vec![],
             mac: [9; 32],
         },
@@ -123,12 +125,13 @@ fn unknown_types_invalid_utf8_boolean_kind_flags_and_status_are_errors() {
     let pending = Message::Pending {
         host_id: [0; 16],
         host_name: "".into(),
+        more: false,
         entries: vec![entry(1, Kind::Lock, false, 1)],
         mac: [0; 32],
     }
     .encode()
     .unwrap();
-    for offset in [28, 29] {
+    for offset in [29, 30] {
         let mut invalid = pending.clone();
         invalid[offset] = 3;
         assert_eq!(Message::decode(&invalid), Err(wire::Error::Value));
@@ -173,13 +176,14 @@ fn strings_truncate_on_utf8_boundary_and_oversize_messages_fail() {
     let oversized = Message::Pending {
         host_id: [0; 16],
         host_name: "x".repeat(255),
+        more: false,
         entries: vec![
             wire::Entry {
                 title: "x".repeat(255),
                 detail: "x".repeat(255),
                 ..entry(1, Kind::Lock, false, 1)
             };
-            2
+            4
         ],
         mac: [0; 32],
     };
@@ -257,5 +261,35 @@ fn seeded_random_decoders_and_mutated_valid_messages_never_panic() {
                 assert_eq!(decoded.encode().unwrap(), bytes);
             }
         }
+    }
+}
+
+#[test]
+fn pending_rejects_reserved_more_values_and_overlong_wire_fields() {
+    let pending = Message::Pending {
+        host_id: [0; 16],
+        host_name: String::new(),
+        more: true,
+        entries: vec![wire::Entry {
+            title: "t".repeat(48),
+            detail: "d".repeat(160),
+            ..entry(1, Kind::Sudo, true, 0)
+        }],
+        mac: [0; 32],
+    }
+    .encode()
+    .unwrap();
+    assert!(matches!(
+        Message::decode(&pending).unwrap(),
+        Message::Pending { more: true, .. }
+    ));
+    let mut invalid = pending.clone();
+    invalid[19] = 2;
+    assert_eq!(Message::decode(&invalid), Err(wire::Error::Value));
+    for (offset, length) in [(33, 48), (82, 160)] {
+        let mut invalid = pending.clone();
+        invalid[offset] = length + 1;
+        invalid.insert(offset + 1, b'x');
+        assert_eq!(Message::decode(&invalid), Err(wire::Error::Value));
     }
 }

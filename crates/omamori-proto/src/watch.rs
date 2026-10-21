@@ -42,6 +42,7 @@ pub struct Session {
     inflight: BTreeMap<RequestId, Nonce>,
     waiting_pending: bool,
     closed: bool,
+    more: bool,
 }
 
 impl Session {
@@ -62,6 +63,7 @@ impl Session {
             inflight: BTreeMap::new(),
             waiting_pending: true,
             closed: false,
+            more: false,
         };
         let out = Output {
             messages: vec![
@@ -103,8 +105,13 @@ impl Session {
             inflight: BTreeMap::new(),
             waiting_pending: false,
             closed: false,
+            more: false,
         };
         (session, out)
+    }
+
+    pub fn more(&self) -> bool {
+        self.more
     }
 
     pub fn is_closed(&self) -> bool {
@@ -150,6 +157,7 @@ impl Session {
             Message::Pending {
                 host_id,
                 entries,
+                more,
                 mac,
                 ..
             } if self.waiting_pending => {
@@ -165,6 +173,7 @@ impl Session {
                 if entries.iter().any(|entry| !ids.insert(entry.req_id)) {
                     return Err(wire::Error::Value);
                 }
+                self.more = more;
                 self.waiting_pending = false;
                 self.entries = entries
                     .into_iter()
@@ -355,7 +364,7 @@ impl Session {
         let mut out = Output::default();
         out.send(Message::PairConfirm {
             accepted: accept,
-            mac: crypto::watch_confirm_mac(key, th),
+            mac: crypto::watch_confirm_mac(key, th, accept),
         })?;
         pair.accepted = Some(accept);
         if !accept {
