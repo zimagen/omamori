@@ -767,6 +767,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "omamori-cli"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "libc",
+ "omamori-ipc",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "omamori-daemon"
 version = "0.1.0"
 dependencies = [
@@ -776,6 +788,7 @@ dependencies = [
  "clap",
  "futures",
  "nix",
+ "omamori-ipc",
  "omamori-proto",
  "rand_core",
  "serde",
@@ -787,6 +800,14 @@ dependencies = [
  "tracing-subscriber",
  "uuid",
  "zeroize",
+]
+
+[[package]]
+name = "omamori-ipc"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -825,6 +846,21 @@ dependencies = [
  "elliptic-curve",
  "primeorder",
  "sha2",
+]
+
+[[package]]
+name = "pam-omamori"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "omamori-daemon",
+ "omamori-ipc",
+ "omamori-proto",
+ "rand_core",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "zeroize",
 ]
 
 [[package]]

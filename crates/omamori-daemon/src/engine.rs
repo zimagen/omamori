@@ -13,34 +13,11 @@ use omamori_proto::{
     wire::{self, Entry, Kind, RequestId},
 };
 use rand_core::{OsRng, RngCore};
-use serde::Deserialize;
 use serde_json::{Value, json};
 use std::{collections::BTreeMap, time::Duration};
 use tokio::{sync::mpsc, time::Instant};
 
-#[derive(Debug, Deserialize)]
-#[serde(tag = "op", rename_all = "kebab-case", deny_unknown_fields)]
-pub(crate) enum Input {
-    Request {
-        kind: RequestKind,
-        user: String,
-        command: Option<String>,
-        tty: Option<String>,
-        pid: Option<u32>,
-    },
-    Status {},
-    PairBegin {},
-    PairConfirm {
-        accept: bool,
-    },
-    Unpair {},
-}
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub(crate) enum RequestKind {
-    Lock,
-    Sudo,
-}
+use omamori_ipc::{Input, RequestKind};
 pub(crate) enum Command {
     Ipc {
         id: u64,

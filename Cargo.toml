@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/omamori-proto", "crates/omamori-daemon"]
+members = ["crates/omamori-proto", "crates/omamori-daemon", "crates/omamori-ipc", "crates/pam-omamori", "crates/omamori-cli"]
 
 [workspace.package]
 edition = "2024"

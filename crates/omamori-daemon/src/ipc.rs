@@ -1,6 +1,7 @@
-use crate::engine::{Command, Input};
+use crate::engine::Command;
 use anyhow::{Context, Result, bail};
 use nix::unistd::{Uid, User};
+use omamori_ipc::Input;
 use serde_json::Value;
 use std::{
     fs,
@@ -90,7 +91,7 @@ async fn line(
             .iter()
             .position(|b| *b == b'\n')
             .map_or(buf.len(), |n| n + 1);
-        if out.len() + n > 4096 {
+        if out.len() + n > omamori_ipc::MAX_LINE {
             bail!("IPC line exceeds 4 KiB");
         }
         out.extend_from_slice(&buf[..n]);
@@ -125,7 +126,8 @@ async fn serve(stream: UnixStream, id: u64, commands: mpsc::Sender<Command>) -> 
             }
             event = events.recv() => {
                 let Some(event) = event else { break; };
-                let terminal = matches!(event["ev"].as_str(), Some("approved" | "unavailable" | "denied" | "pair-done" | "pair-failed"));
+                let event: omamori_ipc::Event = serde_json::from_value(event)?;
+                let terminal = event.is_terminal();
                 let mut bytes = serde_json::to_vec(&event)?;
                 bytes.push(b'\n');
                 tokio::time::timeout(std::time::Duration::from_secs(5), write.write_all(&bytes)).await??;

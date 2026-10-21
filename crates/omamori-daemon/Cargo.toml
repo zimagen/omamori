@@ -14,6 +14,7 @@ default = []
 test-harness = []
 
 [dependencies]
+omamori-ipc = { path = "../omamori-ipc" }
 omamori-proto = { path = "../omamori-proto" }
 tokio = { version = "1", features = ["full"] }
 serde = { version = "1", features = ["derive"] }
