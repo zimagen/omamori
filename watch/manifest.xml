@@ -1,0 +1,9 @@
+<?xml version="1.0"?>
+<iq:manifest xmlns:iq="http://www.garmin.com/xml/connectiq" version="3">
+  <iq:application id="aa7933fe78d64da8ae348e93aecc1730" type="watch-app" name="@Strings.AppName" entry="OmamoriApp" launcherIcon="@Drawables.LauncherIcon" minApiLevel="5.1.0">
+    <iq:products><iq:product id="venu445mm"/><iq:product id="venu441mm"/></iq:products>
+    <iq:permissions><iq:uses-permission id="BluetoothLowEnergy"/></iq:permissions>
+    <iq:languages><iq:language>eng</iq:language></iq:languages>
+    <iq:barrels/>
+  </iq:application>
+</iq:manifest>
