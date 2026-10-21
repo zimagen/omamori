@@ -97,6 +97,8 @@ The PC is the GATT peripheral (Connect IQ is central-only).
 - Advertising only while ≥1 request is pending or pairing is active.
   Service data (for the service UUID): `host_id[0..8] || flags u8`
   (bit0 = pairing mode). The watch selects its stored key by that prefix.
+  Advertising data contains only the service-data AD for the service UUID
+  (30 bytes incl. flags); the UUID is not listed separately.
 - One connection at a time; session state resets on disconnect; session
   idle timeout 60 s; pairing timeout 120 s.
 

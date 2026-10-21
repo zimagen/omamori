@@ -100,6 +100,7 @@ impl<T: Transport> Engine<T> {
     }
     fn fail_pair(&mut self, reason: &str) {
         if let Some(owner) = self.pairing.take() {
+            tracing::info!(result = "failed", reason, "pairing session ended");
             emit(&owner.reply, json!({"ev":"pair-failed","reason":reason}));
         }
     }
@@ -241,6 +242,7 @@ impl<T: Transport> Engine<T> {
                             unavailable(&reply, "no-adapter");
                         } else {
                             self.reset().await;
+                            tracing::info!("pairing session started");
                             self.pairing = Some(PairOwner {
                                 conn: id,
                                 started: Instant::now(),
@@ -338,6 +340,7 @@ impl<T: Transport> Engine<T> {
             }
         }
         if completed_pair && let Some(owner) = self.pairing.take() {
+            tracing::info!(result = "success", "pairing session ended");
             emit(&owner.reply, json!({"ev":"pair-done"}));
         }
         if self.session.as_ref().is_some_and(|s| s.is_closed()) {
@@ -414,7 +417,13 @@ impl<T: Transport> Engine<T> {
         }
         Ok(())
     }
-    async fn update_advertising(&mut self) -> Result<()> {
+    fn log_advertising_stopped(&mut self) {
+        if let Some(data) = self.advertising.take() {
+            let mode = if data[8] & 1 != 0 { "pairing" } else { "auth" };
+            tracing::info!(mode, "advertising stopped");
+        }
+    }
+    async fn update_advertising(&mut self) {
         let wanted =
             if self.transport.powered() && (!self.requests.is_empty() || self.pairing.is_some()) {
                 let mut data = [0; 9];
@@ -425,10 +434,30 @@ impl<T: Transport> Engine<T> {
                 None
             };
         if wanted != self.advertising {
-            self.transport.advertise(wanted).await?;
+            // BlueZ drops the previous registration before replacing it.
+            self.log_advertising_stopped();
+            if let Err(e) = self.transport.advertise(wanted).await {
+                tracing::warn!(error = %e, "BLE advertisement registration failed");
+                if let Some(owner) = self.pairing.take() {
+                    tracing::info!(
+                        result = "failed",
+                        reason = "advertise-failed",
+                        "pairing session ended"
+                    );
+                    unavailable(&owner.reply, "advertise-failed");
+                }
+                for (_, r) in std::mem::take(&mut self.requests) {
+                    unavailable(&r.reply, "advertise-failed");
+                }
+                self.reset().await;
+                return;
+            }
             self.advertising = wanted;
+            if let Some(data) = wanted {
+                let mode = if data[8] & 1 != 0 { "pairing" } else { "auth" };
+                tracing::info!(mode, "advertising started");
+            }
         }
-        Ok(())
     }
     pub(crate) async fn run(mut self, mut commands: mpsc::Receiver<Command>) -> Result<()> {
         let mut timer = tokio::time::interval(Duration::from_millis(100));
@@ -460,16 +489,11 @@ impl<T: Transport> Engine<T> {
                     }
                 }
             }
-            if let Err(e) = self.update_advertising().await {
-                tracing::warn!(error = %e, "BLE advertising failed");
-                self.fail_pair("no-adapter");
-                for (_, r) in std::mem::take(&mut self.requests) {
-                    unavailable(&r.reply, "no-adapter");
-                }
-                self.reset().await;
-            }
+            self.update_advertising().await;
         }
         let _ = self.transport.advertise(None).await;
+        self.log_advertising_stopped();
+        self.fail_pair("shutdown");
         self.reset().await;
         Ok(())
     }
@@ -565,6 +589,58 @@ mod tests {
             if uid != 0 {
                 assert!(pending.iter().all(|r| r["uid"] == uid));
             }
+        }
+    }
+
+    #[tokio::test]
+    async fn advertisement_failure_replies_to_all_callers_and_allows_retry() {
+        for pairing in [false, true] {
+            let (_temp, mut engine, peer) = engine();
+            let mut clients = Vec::new();
+            for id in 1..=2 {
+                let mut events = input(
+                    &mut engine,
+                    id,
+                    1000,
+                    Input::Request {
+                        kind: RequestKind::Lock,
+                        user: "user1000".into(),
+                        command: None,
+                        tty: None,
+                        pid: None,
+                    },
+                )
+                .await;
+                assert_eq!(events.recv().await.unwrap()["ev"], "queued");
+                clients.push(events);
+            }
+            if pairing {
+                // Also cover failure when replacing an active auth advertisement.
+                engine.update_advertising().await;
+                assert!(peer.advertising.borrow().is_some());
+                clients.push(input(&mut engine, 3, 0, Input::PairBegin {}).await);
+            }
+            engine.transport.fail_advertise = true;
+            engine.update_advertising().await;
+            for mut events in clients {
+                assert_eq!(
+                    events.recv().await.unwrap(),
+                    json!({"ev":"unavailable","reason":"advertise-failed"})
+                );
+                assert!(events.recv().await.is_none());
+            }
+            assert!(engine.requests.is_empty());
+            assert!(engine.pairing.is_none());
+            assert!(engine.advertising.is_none());
+            assert!(engine.session.is_none());
+            assert!(!engine.connected);
+            assert!(peer.advertising.borrow().is_none());
+
+            engine.transport.fail_advertise = false;
+            let _events = input(&mut engine, 4, 0, Input::PairBegin {}).await;
+            engine.update_advertising().await;
+            assert_eq!(engine.advertising.unwrap()[8], 1);
+            assert_eq!(peer.advertising.borrow().unwrap()[8], 1);
         }
     }
 

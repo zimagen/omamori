@@ -27,6 +27,39 @@ use uuid::Uuid;
 pub const SERVICE: Uuid = Uuid::from_u128(0x4f6d616d6f7269000001000000000000);
 const RX: Uuid = Uuid::from_u128(0x4f6d616d6f7269000001000000000002);
 const TX: Uuid = Uuid::from_u128(0x4f6d616d6f7269000001000000000003);
+// Keep the payload calculator and its test tied to the advertisement we register.
+fn advertisement(data: [u8; 9]) -> Advertisement {
+    Advertisement {
+        service_data: [(SERVICE, data.to_vec())].into_iter().collect(),
+        discoverable: Some(true),
+        ..Default::default()
+    }
+}
+
+// Only flags and 128-bit service-data ADs are supported. Reject additional
+// fields so a future builder change must also update the legacy size budget.
+fn legacy_advertisement_len(ad: &Advertisement) -> Option<usize> {
+    if !ad.service_uuids.is_empty()
+        || !ad.manufacturer_data.is_empty()
+        || !ad.solicit_uuids.is_empty()
+        || !ad.advertising_data.is_empty()
+        || !ad.system_includes.is_empty()
+        || ad.local_name.is_some()
+        || ad.appearance.is_some()
+        || ad.tx_power.is_some()
+    {
+        return None;
+    }
+    let flags = if ad.discoverable == Some(true) { 3 } else { 0 };
+    Some(
+        flags
+            + ad.service_data
+                .values()
+                .map(|data| 2 + 16 + data.len())
+                .sum::<usize>(),
+    )
+}
+
 #[derive(Default)]
 struct Gate {
     address: Option<Address>,
@@ -185,16 +218,10 @@ impl Transport for Bluez {
                 self.powered = false;
                 bail!("adapter powered off");
             }
-            self.advertisement = Some(
-                live.adapter
-                    .advertise(Advertisement {
-                        service_uuids: [SERVICE].into_iter().collect(),
-                        service_data: [(SERVICE, data.to_vec())].into_iter().collect(),
-                        discoverable: Some(true),
-                        ..Default::default()
-                    })
-                    .await?,
-            );
+            let ad = advertisement(data);
+            let len = legacy_advertisement_len(&ad).context("unsupported advertising field")?;
+            anyhow::ensure!(len <= 31, "legacy advertisement exceeds 31 bytes: {len}");
+            self.advertisement = Some(live.adapter.advertise(ad).await?);
         }
         Ok(())
     }
@@ -238,6 +265,7 @@ impl Transport for Bluez {
                         let mut gate = self.gate.lock().expect("gate mutex");
                         gate.epoch = gate.epoch.wrapping_add(1);
                         gate.address = Some(address);
+                        tracing::info!(%address, "BLE central connected");
                         return Some(Event::Connected);
                     }
                     if control.is_none() {
@@ -270,6 +298,9 @@ impl Transport for Bluez {
                 } => {
                     // Return before any await: recv is cancellation-safe in the engine's select.
                     live.writer = None;
+                    if let Some(address) = self.gate.lock().expect("gate mutex").address.take() {
+                        tracing::info!(%address, "BLE central disconnected");
+                    }
                     return Some(Event::Disconnected);
                 }
             }
@@ -290,6 +321,9 @@ impl Transport for Bluez {
             gate.epoch = gate.epoch.wrapping_add(1);
             gate.address.take()
         };
+        if let Some(address) = address {
+            tracing::info!(%address, "BLE central disconnected");
+        }
         if let Some(live) = &mut self.live {
             live.writer = None;
             if let Some(address) = address
@@ -339,5 +373,24 @@ mod tests {
         }
         assert_eq!(completed.load(Ordering::SeqCst), 1);
         assert!(transport.opening.is_none());
+    }
+}
+
+#[cfg(test)]
+mod advertisement_tests {
+    use super::*;
+
+    #[test]
+    fn advertisement_fits_legacy_pdu() {
+        for mode in [0, 1] {
+            let mut data = [0; 9];
+            data[8] = mode;
+            let ad = advertisement(data);
+            assert_eq!(ad.discoverable, Some(true));
+            assert_eq!(ad.service_data.get(&SERVICE), Some(&data.to_vec()));
+            let len = legacy_advertisement_len(&ad).expect("unexpected advertising field");
+            assert_eq!(len, 30);
+            assert!(len <= 31, "legacy advertisement uses {len} bytes");
+        }
     }
 }

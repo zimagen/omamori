@@ -9,6 +9,7 @@ pub struct Fake {
     outgoing: mpsc::Sender<Vec<u8>>,
     advertising: watch::Sender<Option<[u8; 9]>>,
     powered: bool,
+    pub fail_advertise: bool,
 }
 pub struct Peer {
     pub incoming: mpsc::Sender<Event>,
@@ -25,6 +26,7 @@ pub fn pair() -> (Fake, Peer) {
             outgoing: out,
             advertising,
             powered: true,
+            fail_advertise: false,
         },
         Peer {
             incoming: tx,
@@ -39,6 +41,10 @@ impl Transport for Fake {
         self.powered
     }
     async fn advertise(&mut self, data: Option<[u8; 9]>) -> Result<()> {
+        self.advertising.send_replace(None);
+        if data.is_some() && self.fail_advertise {
+            return Err(anyhow!("simulated BlueZ registration failure"));
+        }
         self.advertising.send_replace(data);
         Ok(())
     }
