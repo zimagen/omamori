@@ -1,3 +1,4 @@
+import Toybox.Cryptography;
 import Toybox.Lang;
 import Toybox.Test;
 
@@ -70,6 +71,7 @@ function testPairSessionPersistsOnlyConfirmedResult(logger) {
 
 (:test)
 module TestFixtures {
+function fromScalar(be as ByteArray) as Cryptography.KeyPair { return new Cryptography.KeyPair({:algorithm => Cryptography.KEY_PAIR_ELLIPTIC_CURVE_SECP256R1, :privateKey => be.reverse()}); }
 function fixtureSession(sink as SessionSink) as Session {
     var s=new Session(sink,{:host_id=>Proto.hex(Vectors.PAIRING_HOST_ID),:host_name=>"omamori-pc",:key=>Proto.hex(Vectors.PAIRING_KEY)},false);
     sink.session=s;s.nonce=Proto.hex(Vectors.PAIRING_WATCH_NONCE);s.start();return s;
@@ -80,7 +82,7 @@ function fixturePending(entries as Array<Entry>,more as Boolean) as ByteArray {
 }
 function fixturePair(sink as SessionSink) as Session {
     var s=new Session(sink,null,true);sink.session=s;
-    s.nonce=Proto.hex(Vectors.PAIRING_WATCH_NONCE);s.ephemeral=Crypto.fromScalar(Proto.hex(Vectors.PAIRING_WATCH_PRIVATE_SCALAR));
+    s.nonce=Proto.hex(Vectors.PAIRING_WATCH_NONCE);s.ephemeral=TestFixtures.fromScalar(Proto.hex(Vectors.PAIRING_WATCH_PRIVATE_SCALAR));
     s.commitMessage=Proto.hex(Vectors.PAIRING_PAIR_COMMIT_MESSAGE);s.pairName="Venu 4 ⌚";
     s.receive(Proto.hex(Vectors.PAIRING_PAIR_HOST_MESSAGE));return s;
 }

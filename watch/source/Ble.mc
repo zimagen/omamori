@@ -51,7 +51,7 @@ class Ble extends BluetoothLowEnergy.BleDelegate {
     }
     function connect(index) {
         if(!active || connecting) {return;}connecting=true;
-        try {owner.connecting(candidates[index][:host],mode);sessionTimer.start(method(:expired),60000,false);device=BluetoothLowEnergy.pairDevice(candidates[index][:scan]);if(device==null) {owner.fail("Connection failed");}}
+        try {owner.connecting(candidates[index][:host],mode);if(!active) {return;}sessionTimer.start(method(:expired),60000,false);device=BluetoothLowEnergy.pairDevice(candidates[index][:scan]);if(device==null) {owner.fail("Connection failed");}}
         catch(e) {owner.fail("Connection failed");}
     }
     function onConnectedStateChanged(d,state) {

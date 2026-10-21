@@ -98,8 +98,12 @@ Test helpers and vectors carry `(:test)` and are excluded from normal builds.
 
 CIQ public keys have little-endian coordinates; the wire uses SEC1
 big-endian coordinates. `Crypto.secret()` probes `generateSecret()` once
-using the public scalar-1/scalar-2 vector, recognizes either output byte
-order, and normalizes it before HKDF. Unexpected output fails closed.
+using the session's ephemeral key: ECDH with the P-256 generator must equal
+its own public key's x coordinate. It recognizes either output byte order
+and caches the normalization for the app run before HKDF. Unexpected output
+fails with “ECDH self-test failed”. Catchable Cryptography exceptions reached
+from BLE callbacks fail the session with “Crypto error”. Fixed private-key
+imports are restricted to test code.
 `testEcdhSimulator` checks raw and normalized secrets against the fixture.
 The SDK's `createPublicKey` signature incorrectly names its first parameter
 `HashAlgorithm` while its documentation requires a `KEY_PAIR_*` constant;

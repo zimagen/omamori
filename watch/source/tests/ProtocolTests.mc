@@ -65,13 +65,13 @@ function testHkdfAndPairing(logger) {
 }
 (:test)
 function testEcdhSimulator(logger) {
-    var watch=Crypto.fromScalar(Proto.hex(Vectors.PAIRING_WATCH_PRIVATE_SCALAR));var host=Crypto.fromScalar(Proto.hex(Vectors.PAIRING_HOST_PRIVATE_SCALAR));
+    var watch=TestFixtures.fromScalar(Proto.hex(Vectors.PAIRING_WATCH_PRIVATE_SCALAR));var host=TestFixtures.fromScalar(Proto.hex(Vectors.PAIRING_HOST_PRIVATE_SCALAR));
     Test.assert(Crypto.equal(Crypto.publicKey(watch),Proto.hex(Vectors.PAIRING_WATCH_PUBLIC)));
     Test.assert(Crypto.equal(Crypto.publicKey(host),Proto.hex(Vectors.PAIRING_HOST_PUBLIC)));
     Test.assert(Crypto.equal(Crypto.sec1(Crypto.rawPublic(Proto.hex(Vectors.PAIRING_WATCH_PUBLIC))),Proto.hex(Vectors.PAIRING_WATCH_PUBLIC)));
     var raw=Crypto.rawSecret(watch,Proto.hex(Vectors.PAIRING_HOST_PUBLIC));var expected=Proto.hex(Vectors.PAIRING_ECDH_Z);
     Test.assert(Crypto.equal(raw,expected) || Crypto.equal(raw.reverse(),expected));
-    // secret() detects and normalizes SDK endianness using the fixed vector.
+    // secret() detects and normalizes SDK endianness using its own public key and the generator.
     Test.assert(Crypto.equal(Crypto.secret(watch,Proto.hex(Vectors.PAIRING_HOST_PUBLIC)),expected));
     Test.assert(Crypto.equal(Crypto.secret(host,Proto.hex(Vectors.PAIRING_WATCH_PUBLIC)),expected));
     return true;
@@ -84,5 +84,25 @@ function testMalformedCodecAndUtf8(logger) {
     var unicode="🦀🦀";Test.assertEqual(Proto.text(Proto.stringBytes(unicode,7)),"🦀");
     var malformed=[Proto.hex("02c080"),Proto.hex("03eda080"),Proto.hex("04f4908080"),Proto.hex("01ff"),Proto.hex("02e282")];
     for(var j=0;j<malformed.size();j++) {var invalid=false;try {(new Reader(malformed[j])).stringRaw();}catch(e) {invalid=true;}Test.assert(invalid);}
+    return true;
+}
+
+// Exercise production calibration without importing any fixed private key,
+// including reuse of the cached byte order with a different ephemeral key.
+(:test)
+function testEcdhEphemeralCalibration(logger) {
+    var saved = Crypto._reverseSecret;
+    Crypto._reverseSecret = null;
+    try {
+        var generator = Proto.hex("046b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c2964fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5");
+        var pair = Crypto.keyPair();
+        Test.assert(Crypto.equal(Crypto.secret(pair,generator),Crypto.publicKey(pair).slice(1,33)));
+        Test.assert(Crypto._reverseSecret != null);
+        var order = Crypto._reverseSecret;
+        var next = Crypto.keyPair();
+        Test.assert(Crypto.equal(Crypto.secret(next,generator),Crypto.publicKey(next).slice(1,33)));
+        Test.assertEqual(Crypto._reverseSecret,order);
+    } catch(e) { Crypto._reverseSecret = saved;throw e; }
+    Crypto._reverseSecret = saved;
     return true;
 }

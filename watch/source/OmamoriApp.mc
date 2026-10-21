@@ -20,13 +20,24 @@ class OmamoriApp extends Application.AppBase {
         if(session!=null) {session.close();}session=null;
         status=pair?"Scanning for pairing PC…":"Scanning for PC…";WatchUi.requestUpdate();ble.start(pair);
     }
-    function connecting(host,pair) {status="Connecting…";session=new Session(self,host,pair);WatchUi.requestUpdate();}
-    function connected() {status="Authenticating…";session.start();WatchUi.requestUpdate();}
+    function connecting(host,pair) {
+        status="Connecting…";
+        try {session=new Session(self,host,pair);}catch(e) {fail("Crypto error");return;}
+        WatchUi.requestUpdate();
+    }
+    function connected() {
+        status="Authenticating…";
+        try {session.start();}catch(e) {sessionError(e,"Session failed");return;}
+        WatchUi.requestUpdate();
+    }
+    function sessionError(e, fallback as String) {
+        fail(e instanceof CryptoError ? e.message : fallback);
+    }
     function send(bytes) {ble.send(bytes);}
     function received(bytes) {
         if(rejecting) {return;}
         if(session==null || session.closed) {fail("Unexpected PC message");return;}
-        try {session.receive(bytes);}catch(e) {fail("Invalid PC message");}
+        try {session.receive(bytes);}catch(e) {sessionError(e,"Invalid PC message");}
     }
     function visible() as Array<Entry> {return session!=null && !session.closed && !session.pairing?session.visible():[];}
     function hasMore() {return session!=null && !session.closed && session.more;}
