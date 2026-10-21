@@ -129,7 +129,7 @@ PC → Watch
 
 | type | name | body |
 |---|---|---|
-| 0x81 | Pending | host_id[16], host_name str, count u8, entries…, mac[32] |
+| 0x81 | Pending | host_id[16], host_name str, more u8, count u8, entries…, mac[32] |
 | 0x82 | Result | req_id[8], status u8, mac[32] |
 | 0x90 | PairHost | host_pub[65], host_nonce[16], host_id[16], host_name str |
 | 0x91 | PairResult | accepted u8, mac[32] |
@@ -138,10 +138,20 @@ PC → Watch
 Pending entry: `req_id[8], kind u8 (1 lock, 2 sudo), flags u8 (bit0
 needs_confirm), age_s u16, title str, detail str`.
 
+Size rule: on the wire title is truncated to 48 bytes and detail to 160
+bytes (char boundary). The host lists requests oldest first and stops before
+the entry that would make the message exceed 1024 bytes; Pending flags in a
+header byte after host_name: `more u8` (1 if entries were left out). The
+watch shows "+ more" and a refresh lists the rest once earlier ones are gone.
+Wire layout therefore is: `host_id[16], host_name str, more u8, count u8,
+entries…, mac[32]`.
+
 MACs:
 
 - Pending: `MAC(K, "omamori/v1/pending" || watch_nonce || <all message bytes before mac>)`
-- Approve: `MAC(K, "omamori/v1/approve" || host_id || watch_nonce || req_id || kind || H(title || 0x00 || detail))`
+- Approve: `MAC(K, "omamori/v1/approve" || host_id || watch_nonce || req_id || kind || H(u16len(title) || title || u16len(detail) || detail))`
+  where title/detail are the exact wire (possibly truncated) bytes and
+  `u16len` is the byte length as big-endian u16.
 - Result: `MAC(K, "omamori/v1/result" || watch_nonce || req_id || status)`;
   status 0 ok, 1 unknown/expired, 2 bad mac.
 
@@ -177,9 +187,11 @@ The daemon sets needs_confirm = 1 for sudo and 0 for lock when
    - `th = H(PairCommit || PairHost || PairReveal)` over the full message bytes
    - `code = (u32 from first 4 bytes of MAC(K, "omamori/v1/sas" || th)) mod 1_000_000`, shown as 6 digits.
 6. The CLI shows the code and asks y/N; the watch shows the code with
-   accept/reject. Watch → PairConfirm(accepted, `MAC(K, "omamori/v1/pair-ok/watch" || th)`).
+   accept/reject. Watch → PairConfirm(accepted,
+   `MAC(K, "omamori/v1/pair-ok/watch" || th || accepted)`). A rejecting
+   watch still sends a valid MAC over accepted = 0.
 7. When both sides accept and the MAC is valid, the daemon stores the
-   pairing and sends PairResult(1, `MAC(K, "omamori/v1/pair-ok/host" || th)`);
+   pairing and sends PairResult(1, `MAC(K, "omamori/v1/pair-ok/host" || th || 0x01)`);
    the watch stores `{host_id, host_name, K}` only after verifying it.
    Otherwise PairResult(0, zeros) and nothing is stored.
 
