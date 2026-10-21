@@ -1,0 +1,5 @@
+target/
+*.prg
+*.iq
+watch/bin/
+developer_key*
