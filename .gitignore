@@ -3,3 +3,6 @@ target/
 *.iq
 watch/bin/
 developer_key*
+packaging/*.pkg.tar.*
+packaging/src/
+packaging/pkg/
