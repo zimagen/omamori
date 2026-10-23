@@ -92,7 +92,12 @@ sudo omamori setup-pam
 This shows a diff and asks before writing. It inserts a marked PAM line
 after `pam_howdy.so` if present, otherwise before the first authentication
 line. It preserves permissions and creates a timestamped backup. Password
-fallback remains available.
+fallback remains available: a password typed at the Omamori prompt jumps
+straight to the password module (`cred_insufficient=N` skips the N auth lines
+in between, such as fingerprint), so it is not delayed by other prompts.
+Running `setup-pam` again upgrades an older Omamori line.
+
+Security issues: see [SECURITY.md](SECURITY.md).
 
 Install the optional widget, replacing `<repo>` with this repository's URL
 or local checkout path:
@@ -117,10 +122,13 @@ keys and IPC behavior.
 Watch unlock requires the patches in [contrib/](contrib/) on top of
 `omarchy.lock` in an Omarchy Quattro checkout. `0001-howdy-lock.patch` is the
 author's Howdy face-authentication base; `0002-omamori-watch-lock.patch`
-adds the separate watch PAM stack alongside the other authentication paths.
-Apply them in that order, or apply only 0002 if the matching 0001 base is
-already present. Check your Omarchy checkout and local modifications before
-applying patches.
+adds the separate watch PAM stack alongside the other authentication paths;
+`0003-omamori-lock-boost.patch` runs `omamori boost` when the lock screen
+wakes, so the PC advertises fast again (30 s) and the watch connects quickly.
+Apply them in order, or skip 0001 if the matching base is already present.
+CI applies all three to the Omarchy commit pinned as `OMARCHY_REF` in
+[.github/workflows/lint.yml](.github/workflows/lint.yml). Check your Omarchy
+checkout and local modifications before applying patches.
 
 With `OMARCHY_PATH` set to your Omarchy checkout and `OMAMORI_REPO` set to
 this checkout's absolute path:
@@ -128,8 +136,11 @@ this checkout's absolute path:
 ```sh
 git -C "$OMARCHY_PATH" am "$OMAMORI_REPO/contrib/0001-howdy-lock.patch"
 git -C "$OMARCHY_PATH" am "$OMAMORI_REPO/contrib/0002-omamori-watch-lock.patch"
+git -C "$OMARCHY_PATH" am "$OMAMORI_REPO/contrib/0003-omamori-lock-boost.patch"
 omarchy-apply-lock
 ```
+
+Log out and back in afterwards so the shell reloads the lock screen.
 
 The generated `/etc/pam.d/omarchy-lock-watch` runs `pam_omamori.so mode=lock`.
 If watch unlock causes trouble, switch to a TTY and disable that stack:
