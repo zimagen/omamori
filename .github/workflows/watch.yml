@@ -53,10 +53,10 @@ jobs:
           GARMIN_PASSWORD: ${{ secrets.GARMIN_PASSWORD }}
           AGREEMENT_HASH: ${{ vars.CIQ_AGREEMENT_HASH }}
         run: |
-          test -n "$GARMIN_USERNAME" && test -n "$AGREEMENT_HASH" || {
+          if [ -z "$GARMIN_USERNAME" ] || [ -z "$AGREEMENT_HASH" ]; then
             echo "::error::Set GARMIN_USERNAME/GARMIN_PASSWORD secrets and the CIQ_AGREEMENT_HASH variable"
             exit 1
-          }
+          fi
           mkdir -p ~/.Garmin/ConnectIQ/Sdks
           connect-iq-sdk-manager agreement accept -H "$AGREEMENT_HASH"
           connect-iq-sdk-manager login
