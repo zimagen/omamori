@@ -41,18 +41,24 @@ and exits after about 1.5 seconds when there are no remaining requests.
 
 When idle or showing an error, tap the screen or press START to open the menu
 for **Pair PC**, **Refresh**, or **Paired PCs**. The menu gesture is also
-supported where available. START never confirms pairing or approves a request.
+supported where available. Screen taps and START use the same action.
 For first pairing, start `sudo omamori pair` on the PC and launch the watch app.
 To pair another PC, choose **Pair PC** from the menu.
-Compare the six digits on both screens. Tap to accept; Back rejects.
+Compare the six digits on both screens. Tap or press START to accept; BACK rejects.
+The code screen footer reads **Tap/START accept • BACK reject**.
 Confirm on the PC too. The watch saves the host only after authenticating its
 positive PairResult. Pair rejection is sent with a valid MAC before disconnect.
 
 For sudo, the screen shows the request's title and full command/tty detail.
 Swipe to move between pending entries; the counter identifies the current
-entry. If the text needs another page, tap **to read more** first; only a tap
-on the final page approves that displayed request. Each approval consumes
-one request. `+ more` indicates requests omitted from the current wire list;
+entry. Its footer reads **Tap/START approve • Swipe next**. If the text needs
+another page, tap or press START **to read more** first; only an action on the
+final page approves that displayed request. Taps and START are ignored for
+700 ms after a pairing code or request first appears or changes, including
+after swiping to another entry. Each action approves only the currently
+displayed item and consumes at most one request. BACK still rejects pairing
+immediately during this guard period. `+ more` indicates requests omitted from
+the current wire list;
 **Refresh** loads a new authenticated list once outstanding results arrive.
 The app also refreshes after draining the visible batch and between automatic
 requests. When several PCs are discovered in the initial discovery window,
