@@ -36,8 +36,9 @@ How it works
 - Pair once: run `sudo omamori pair` on the PC, open the app, and confirm
   the same six-digit code on both screens.
 - Assign Omamori to a button hold (Settings > System > Shortcuts).
-- When sudo or the lock screen asks, hold the button. The watch shows what
-  is being approved; lock-screen unlocks go through immediately.
+- When sudo or the lock screen asks, hold the button. For sudo the watch
+  shows the command and terminal; tap or press START to approve.
+  Lock-screen unlocks go through immediately.
 - Your password still works as before; the watch is an extra way in.
 
 Security
