@@ -12,5 +12,11 @@ updates:
     schedule:
       interval: monthly
     groups:
+      # The RustCrypto crates share trait crates (digest, elliptic-curve,
+      # rand_core) and only build when bumped together. Pairing and the auth
+      # MAC must stay wire-compatible with the watch: check test-vectors/v1.json.
+      rustcrypto:
+        patterns: ["hmac", "hkdf", "sha2", "p256", "rand_core", "subtle", "zeroize"]
+        update-types: [major, minor, patch]
       cargo:
         update-types: [minor, patch]
