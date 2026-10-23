@@ -51,6 +51,7 @@ config.toml:
 approval = "per-type"   # "per-type" (lock = auto, sudo = confirm on watch) | "auto"
 host_name = ""          # empty = hostname
 adapter = ""            # empty = default BlueZ adapter
+adv_interval_ms = [20, 30] # min/max, each 20..=10240 ms, min <= max
 sudo = true
 lock = true
 ```
@@ -102,6 +103,14 @@ The PC is the GATT peripheral (Connect IQ is central-only).
   (bit0 = pairing mode). The watch selects its stored key by that prefix.
   Advertising data contains only the service-data AD for the service UUID
   (30 bytes incl. flags); the UUID is not listed separately.
+  Advertising intervals default to 20–30 ms, configurable with
+  `adv_interval_ms`. These parameters do not consume advertising payload bytes.
+  If BlueZ rejects registration with intervals, the daemon warns and retries
+  once using BlueZ defaults, remembering this fallback until restart. It logs
+  the selected interval mode once; BlueZ may silently ignore interval settings.
+  In authentication mode, the watch connects immediately when its only saved
+  host is discovered. With multiple saved hosts, or in pairing mode, it collects
+  candidates for 1200 ms before connecting or showing the host chooser.
 - One connection at a time; session state resets on disconnect; session
   idle timeout 60 s; pairing timeout 120 s.
 

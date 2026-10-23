@@ -28,11 +28,60 @@ pub const SERVICE: Uuid = Uuid::from_u128(0x4f6d616d6f7269000001000000000000);
 const RX: Uuid = Uuid::from_u128(0x4f6d616d6f7269000001000000000002);
 const TX: Uuid = Uuid::from_u128(0x4f6d616d6f7269000001000000000003);
 // Keep the payload calculator and its test tied to the advertisement we register.
-fn advertisement(data: [u8; 9]) -> Advertisement {
+fn advertisement(data: [u8; 9], interval_ms: Option<[u16; 2]>) -> Advertisement {
     Advertisement {
         service_data: [(SERVICE, data.to_vec())].into_iter().collect(),
         discoverable: Some(true),
+        min_interval: interval_ms.map(|v| Duration::from_millis(v[0].into())),
+        max_interval: interval_ms.map(|v| Duration::from_millis(v[1].into())),
         ..Default::default()
+    }
+}
+
+// Kept outside Live so adapter reinitialization retains the fallback decision.
+struct Advertising {
+    interval_ms: [u16; 2],
+    unsupported: bool,
+    logged: bool,
+}
+
+impl Advertising {
+    fn new(interval_ms: [u16; 2]) -> Self {
+        Self {
+            interval_ms,
+            unsupported: false,
+            logged: false,
+        }
+    }
+
+    async fn register<T, F, Fut>(&mut self, data: [u8; 9], mut register: F) -> Result<T>
+    where
+        F: FnMut(Advertisement) -> Fut,
+        Fut: Future<Output = Result<T>>,
+    {
+        let ad = advertisement(data, (!self.unsupported).then_some(self.interval_ms));
+        let len = legacy_advertisement_len(&ad).context("unsupported advertising field")?;
+        anyhow::ensure!(len <= 31, "legacy advertisement exceeds 31 bytes: {len}");
+        let result = register(ad).await;
+        let handle = match result {
+            Err(error) if !self.unsupported => {
+                // Remember even if the retry fails, to avoid repeated rejected attempts.
+                self.unsupported = true;
+                tracing::warn!(%error, "advertising intervals rejected; retrying with BlueZ default");
+                register(advertisement(data, None)).await?
+            }
+            result => result?,
+        };
+        if !self.logged {
+            if self.unsupported {
+                tracing::info!("advertising interval: BlueZ default");
+            } else {
+                let [min, max] = self.interval_ms;
+                tracing::info!("advertising interval: {min}-{max} ms");
+            }
+            self.logged = true;
+        }
+        Ok(handle)
     }
 }
 
@@ -87,12 +136,13 @@ pub struct Bluez {
     writes: mpsc::Receiver<Write>,
     write_tx: mpsc::Sender<Write>,
     advertisement: Option<AdvertisementHandle>,
+    advertising: Advertising,
     powered: bool,
     retry: tokio::time::Interval,
     opening: Option<Opening>,
 }
 impl Bluez {
-    pub async fn new(adapter_name: &str) -> Self {
+    pub async fn new(adapter_name: &str, adv_interval_ms: [u16; 2]) -> Self {
         let (write_tx, writes) = mpsc::channel(128);
         let mut this = Self {
             adapter_name: adapter_name.into(),
@@ -101,6 +151,7 @@ impl Bluez {
             writes,
             write_tx,
             advertisement: None,
+            advertising: Advertising::new(adv_interval_ms),
             powered: false,
             retry: tokio::time::interval(Duration::from_secs(2)),
             opening: None,
@@ -218,10 +269,11 @@ impl Transport for Bluez {
                 self.powered = false;
                 bail!("adapter powered off");
             }
-            let ad = advertisement(data);
-            let len = legacy_advertisement_len(&ad).context("unsupported advertising field")?;
-            anyhow::ensure!(len <= 31, "legacy advertisement exceeds 31 bytes: {len}");
-            self.advertisement = Some(live.adapter.advertise(ad).await?);
+            self.advertisement = Some(
+                self.advertising
+                    .register(data, |ad| async { Ok(live.adapter.advertise(ad).await?) })
+                    .await?,
+            );
         }
         Ok(())
     }
@@ -356,6 +408,7 @@ mod tests {
             writes,
             write_tx,
             advertisement: None,
+            advertising: Advertising::new([20, 30]),
             powered: false,
             retry,
             opening: Some(Box::pin(async move {
@@ -385,12 +438,75 @@ mod advertisement_tests {
         for mode in [0, 1] {
             let mut data = [0; 9];
             data[8] = mode;
-            let ad = advertisement(data);
+            let ad = advertisement(data, Some([20, 30]));
             assert_eq!(ad.discoverable, Some(true));
+            assert_eq!(ad.min_interval, Some(Duration::from_millis(20)));
+            assert_eq!(ad.max_interval, Some(Duration::from_millis(30)));
             assert_eq!(ad.service_data.get(&SERVICE), Some(&data.to_vec()));
             let len = legacy_advertisement_len(&ad).expect("unexpected advertising field");
             assert_eq!(len, 30);
             assert!(len <= 31, "legacy advertisement uses {len} bytes");
+        }
+    }
+
+    #[tokio::test]
+    async fn accepted_intervals_are_reused() {
+        let mut advertising = Advertising::new([40, 60]);
+        for _ in 0..2 {
+            let mut attempts = 0;
+            advertising
+                .register([0; 9], |ad| {
+                    attempts += 1;
+                    assert_eq!(ad.min_interval, Some(Duration::from_millis(40)));
+                    assert_eq!(ad.max_interval, Some(Duration::from_millis(60)));
+                    future::ready(Ok(()))
+                })
+                .await
+                .unwrap();
+            assert_eq!(attempts, 1);
+        }
+        assert!(!advertising.unsupported);
+    }
+
+    #[tokio::test]
+    async fn rejected_intervals_retry_once_and_are_never_attempted_again() {
+        // Also retain the decision when registration without intervals fails.
+        for fallback_succeeds in [true, false] {
+            let mut advertising = Advertising::new([20, 30]);
+            let mut attempts = Vec::new();
+            let result = advertising
+                .register([7; 9], |ad| {
+                    assert_eq!(ad.service_data.get(&SERVICE), Some(&vec![7; 9]));
+                    attempts.push((ad.min_interval, ad.max_interval));
+                    future::ready(if ad.min_interval.is_some() || !fallback_succeeds {
+                        Err(anyhow::anyhow!("registration rejected"))
+                    } else {
+                        Ok(())
+                    })
+                })
+                .await;
+            assert_eq!(result.is_ok(), fallback_succeeds);
+            assert_eq!(
+                attempts,
+                vec![
+                    (
+                        Some(Duration::from_millis(20)),
+                        Some(Duration::from_millis(30))
+                    ),
+                    (None, None),
+                ]
+            );
+            attempts.clear();
+            assert!(
+                advertising
+                    .register([0; 9], |ad| {
+                        attempts.push((ad.min_interval, ad.max_interval));
+                        future::ready(Err::<(), _>(anyhow::anyhow!("still unavailable")))
+                    })
+                    .await
+                    .is_err()
+            );
+            assert_eq!(attempts, vec![(None, None)]);
         }
     }
 }

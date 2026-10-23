@@ -36,11 +36,13 @@ class Ble extends BluetoothLowEnergy.BleDelegate {
             var data=r.getServiceData(service);if(data==null || data.size()!=9) {continue;}
             if(mode) {if((data[8]&1)!=0) {addCandidate(r,null);}}
             else {for(var i=0;i<hosts.size();i++) {if(Crypto.equal(data.slice(0,8),hosts[i][:host_id].slice(0,8))) {addCandidate(r,hosts[i]);}}}
+            if(!active || connecting) {return;}
         }
     }
     function addCandidate(r as BluetoothLowEnergy.ScanResult,h as Host or Null) {
         for(var i=0;i<candidates.size();i++) {if(r.isSameDevice(candidates[i][:scan]) && (h==null || Crypto.equal(h[:host_id],candidates[i][:host][:host_id]))) {return;}}
         candidates.add({:scan=>r,:host=>h});
+        if(!mode && hosts.size()==1 && h!=null) {choose();return;}
         // Collect a short window so multiple nearby PCs can be chosen.
         if(candidates.size()==1) {collectTimer.start(method(:choose),1200,false);}
     }
