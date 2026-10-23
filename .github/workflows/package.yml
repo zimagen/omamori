@@ -1,0 +1,58 @@
+name: Arch package
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'crates/**'
+      - 'Cargo.*'
+      - 'packaging/**'
+      - '.github/workflows/package.yml'
+  pull_request:
+    paths:
+      - 'crates/**'
+      - 'Cargo.*'
+      - 'packaging/**'
+      - '.github/workflows/package.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  makepkg:
+    name: makepkg in Arch Linux
+    runs-on: ubuntu-24.04
+    container: archlinux:base-devel
+    steps:
+      - name: Dependencies and build user
+        run: |
+          pacman -Syu --noconfirm --needed git rust bluez dbus pam namcap
+          useradd -m builder
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: makepkg
+        run: |
+          chown -R builder: "$GITHUB_WORKSPACE"
+          su builder -c "cd '$GITHUB_WORKSPACE/packaging' && makepkg --noconfirm --nodeps"
+      - name: Package contents
+        working-directory: packaging
+        run: |
+          pkg=$(find . -maxdepth 1 -name 'omamori-[0-9]*-x86_64.pkg.tar.zst' | head -1)
+          pacman -Qlp "$pkg"
+          # The package must never ship or edit PAM service files.
+          if pacman -Qlp "$pkg" | grep -q ' /etc/pam.d/'; then
+            echo "package ships files in /etc/pam.d" >&2
+            exit 1
+          fi
+          namcap PKGBUILD "$pkg" || true
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: omamori-arch-package
+          path: packaging/omamori-[0-9]*-x86_64.pkg.tar.zst
+          retention-days: 14

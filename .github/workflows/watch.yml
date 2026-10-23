@@ -1,0 +1,97 @@
+name: Watch app
+
+# Manual only: downloading the Connect IQ SDK needs a Garmin developer login
+# and building needs the signing key. Required repository secrets:
+#   GARMIN_USERNAME, GARMIN_PASSWORD    Garmin developer account
+#   CIQ_DEVELOPER_KEY_B64               base64 of the DER developer key
+# CIQ_AGREEMENT_HASH (repository variable) is the hash of the SDK agreement
+# the owner accepted (`connect-iq-sdk-manager agreement view`).
+on:
+  workflow_dispatch:
+    inputs:
+      export_iq:
+        description: Also export a store package (.iq)
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+env:
+  CIQ_SDK: 9.3.0
+  CIQ_CLI: 0.8.4
+  DEVICES: venu445mm venu441mm
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Java
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends openjdk-17-jre-headless
+          java -version
+
+      - name: Connect IQ SDK manager CLI
+        run: |
+          base=https://github.com/lindell/connect-iq-sdk-manager-cli/releases/download/v$CIQ_CLI
+          name=connect-iq-sdk-manager-cli_${CIQ_CLI}_Linux_x86_64.tar.gz
+          curl -fsSL -o "$RUNNER_TEMP/$name" "$base/$name"
+          curl -fsSL -o "$RUNNER_TEMP/checksums.txt" "$base/checksums.txt"
+          (cd "$RUNNER_TEMP" && grep "$name" checksums.txt | sha256sum -c -)
+          mkdir -p "$RUNNER_TEMP/ciq-cli"
+          tar -xzf "$RUNNER_TEMP/$name" -C "$RUNNER_TEMP/ciq-cli"
+          echo "$RUNNER_TEMP/ciq-cli" >> "$GITHUB_PATH"
+
+      - name: SDK and devices
+        env:
+          GARMIN_USERNAME: ${{ secrets.GARMIN_USERNAME }}
+          GARMIN_PASSWORD: ${{ secrets.GARMIN_PASSWORD }}
+          AGREEMENT_HASH: ${{ vars.CIQ_AGREEMENT_HASH }}
+        run: |
+          test -n "$GARMIN_USERNAME" && test -n "$AGREEMENT_HASH" || {
+            echo "::error::Set GARMIN_USERNAME/GARMIN_PASSWORD secrets and the CIQ_AGREEMENT_HASH variable"
+            exit 1
+          }
+          mkdir -p ~/.Garmin/ConnectIQ/Sdks
+          connect-iq-sdk-manager agreement accept -H "$AGREEMENT_HASH"
+          connect-iq-sdk-manager login
+          connect-iq-sdk-manager sdk set "$CIQ_SDK"
+          args=(); for d in $DEVICES; do args+=(-d "$d"); done
+          connect-iq-sdk-manager device download "${args[@]}"
+          connect-iq-sdk-manager sdk current-path --bin >> "$GITHUB_PATH"
+
+      - name: Signing key
+        env:
+          KEY_B64: ${{ secrets.CIQ_DEVELOPER_KEY_B64 }}
+        run: |
+          test -n "$KEY_B64" || { echo "::error::Set CIQ_DEVELOPER_KEY_B64"; exit 1; }
+          umask 077
+          printf '%s' "$KEY_B64" | base64 -d > "$RUNNER_TEMP/developer_key.der"
+
+      - name: Build
+        run: |
+          python3 -I watch/tools/generate_vectors.py --check
+          mkdir -p out
+          for d in $DEVICES; do
+            monkeyc -d "$d" -f watch/monkey.jungle -o "out/omamori-$d.prg" -y "$RUNNER_TEMP/developer_key.der" -w
+            monkeyc -d "$d" -f watch/monkey.jungle -o "out/omamori-$d-tests.prg" -y "$RUNNER_TEMP/developer_key.der" -w --unit-test
+          done
+          if [ "${{ inputs.export_iq }}" = true ]; then
+            monkeyc -e -r -f watch/monkey.jungle -o out/omamori.iq -y "$RUNNER_TEMP/developer_key.der" -w
+          fi
+          ls -l out
+
+      - name: Remove signing key
+        if: always()
+        run: rm -f "$RUNNER_TEMP/developer_key.der"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: omamori-watch
+          path: out/
+          retention-days: 14

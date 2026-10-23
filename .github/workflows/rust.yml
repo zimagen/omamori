@@ -1,0 +1,71 @@
+name: Rust
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+
+jobs:
+  test:
+    name: fmt, clippy, test
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: System libraries (PAM, D-Bus)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libpam0g-dev libdbus-1-dev pkg-config
+
+      - name: Rust toolchain
+        run: |
+          rustup toolchain install stable --profile minimal --component rustfmt,clippy
+          rustup default stable
+          rustc --version
+
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: cargo-${{ runner.os }}-
+
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets --all-features --locked
+      - run: cargo test --workspace --all-features --locked
+
+      - name: Release build rejects the fake transport
+        run: |
+          cargo build --release --locked -p omamori-daemon -p pam-omamori -p omamori-cli
+          if timeout 10 ./target/release/omamorid --transport fake 2>/dev/null; then
+            echo "release omamorid accepted --transport fake" >&2
+            exit 1
+          fi
+
+      - name: PAM module exports only the PAM entry points
+        run: |
+          exported=$(nm -D --defined-only target/release/libpam_omamori.so | awk '$2 == "T" {print $3}' | sort)
+          echo "$exported"
+          test "$exported" = "$(printf 'pam_sm_authenticate\npam_sm_setcred')"
+
+      - name: Test vectors are reproducible
+        run: |
+          cargo run --locked -q -p omamori-proto --example gen-vectors > "$RUNNER_TEMP/v1.json"
+          diff -u test-vectors/v1.json "$RUNNER_TEMP/v1.json"

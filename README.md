@@ -171,12 +171,24 @@ hooks print instructions and warnings only; they never edit PAM files.
 
 ```sh
 cargo fmt --all -- --check
-cargo clippy --workspace --all-targets -- -D warnings
-cargo test --workspace --locked
+cargo clippy --workspace --all-targets --all-features -- -D warnings
+cargo test --workspace --all-features --locked
 ```
 
 The protocol and host integration tests run without Bluetooth hardware.
 QML rendering, floating-terminal actions, watch behavior, and lock-screen
 integration need an Omarchy Wayland session and hardware testing.
+
+CI (`.github/workflows/`):
+
+- `rust.yml`: fmt, clippy, tests, release build checks (no fake transport,
+  PAM module exports only `pam_sm_*`), reproducible test vectors.
+- `lint.yml`: shellcheck, actionlint, Omarchy's plugin validator, and the
+  `contrib/` lock-screen patches applied and tested against the pinned
+  Omarchy commit (`OMARCHY_REF`; bump it together with the patches).
+- `package.yml`: `makepkg` in an Arch container; uploads the package.
+- `watch.yml`: manual. Builds the watch app (and optionally the store `.iq`).
+  Needs secrets `GARMIN_USERNAME`, `GARMIN_PASSWORD`, `CIQ_DEVELOPER_KEY_B64`
+  and the variable `CIQ_AGREEMENT_HASH`.
 
 Licensed under the [MIT License](LICENSE).

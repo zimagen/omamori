@@ -4,7 +4,7 @@
 # Does not touch /etc/pam.d.
 set -euo pipefail
 cd "$(dirname "$0")/../packaging"
-pkg=$(ls -t omamori-[0-9]*-x86_64.pkg.tar.* 2>/dev/null | head -1)
+pkg=$(find . -maxdepth 1 -name 'omamori-[0-9]*-x86_64.pkg.tar.*' -printf '%T@ %p\n' | sort -nr | head -1 | cut -d' ' -f2-)
 [[ -n $pkg ]] || { echo "no built package in packaging/; run makepkg first" >&2; exit 1; }
 echo "== installing $pkg"
 sudo pacman -U --noconfirm \

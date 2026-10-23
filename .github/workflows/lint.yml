@@ -1,0 +1,76 @@
+name: Lint
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Omarchy Quattro commit whose plugin validator and lock-screen sources the
+  # contrib/ patches are written against. Bump together with the patches.
+  OMARCHY_REF: 967bbdd7346e6e2ff1a6af33c5d762ea784832cc
+
+jobs:
+  scripts:
+    name: shellcheck, actionlint
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: shellcheck
+        run: |
+          shellcheck --version
+          shellcheck scripts/*.sh
+          # PKGBUILD variables are consumed by makepkg.
+          shellcheck -s bash -e SC2034,SC2154,SC2164 packaging/PKGBUILD packaging/omamori.install
+      - name: actionlint
+        run: |
+          go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+          "$(go env GOPATH)/bin/actionlint"
+
+  plugin:
+    name: Omarchy plugin manifest and lock-screen patches
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          path: omamori
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          repository: omacom/omarchy
+          ref: ${{ env.OMARCHY_REF }}
+          path: omarchy
+      - name: Validate manifest.json with Omarchy's validator
+        run: bash omarchy/bin/omarchy-plugin-validate omamori
+      - name: contrib/ patches apply in order
+        working-directory: omarchy
+        run: |
+          git config user.name ci
+          git config user.email ci@example.invalid
+          git am ../omamori/contrib/0*.patch
+          git log --oneline -4
+      - name: Patched lock-screen tests
+        working-directory: omarchy
+        run: |
+          bash test/shell.d/apply-lock-test.sh
+          bash test/shell.d/qml-text-format-test.sh
+
+  watch-vectors:
+    name: watch test vectors match the protocol fixture
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: python3 -I watch/tools/generate_vectors.py --check
