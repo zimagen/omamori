@@ -11,6 +11,9 @@ never a requirement.
   is stored in plain Connect IQ app storage. If on-device testing shows that
   app storage is readable over USB while the watch is passcode-locked, we go
   back to an app-PIN design (out of scope for v1).
+  Verified on a Venu 4: a passcode-locked watch does not enter MTP mode, so
+  app storage is not reachable over USB without the passcode. Not covered:
+  hardware-level extraction (flash chip-off, debug interfaces).
 - Out of scope: login/tty, polkit, LUKS, phone relay, proximity unlock, iOS,
   several watches per PC, relay attacks over BLE.
 - Malware running as the user must not be able to get root through omamori:
