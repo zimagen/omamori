@@ -1,0 +1,161 @@
+From b4d6dff46d2906f52353c2c535c9c371d3fef2ca Mon Sep 17 00:00:00 2001
+From: zimagen <zimagen@users.noreply.github.com>
+Date: Fri, 23 Oct 2026 02:11:35 +0000
+Subject: [PATCH] Local: omamori watch unlock on lock screen
+
+---
+ bin/omarchy-apply-lock         | 13 +++++++
+ shell/plugins/lock/Service.qml | 64 ++++++++++++++++++++++++++++++++++
+ 2 files changed, 77 insertions(+)
+
+diff --git a/bin/omarchy-apply-lock b/bin/omarchy-apply-lock
+index e7fcc1fa..90a715f7 100755
+--- a/bin/omarchy-apply-lock
++++ b/bin/omarchy-apply-lock
+@@ -55,6 +55,19 @@ else
+   as_root rm -f /etc/pam.d/omarchy-lock-face
+ fi
+ 
++# A paired watch (omamori) also gets a stack of its own, run beside the
++# others; pam_omamori waits for the watch and never touches the password.
++if [[ -f /usr/lib/security/pam_omamori.so ]]; then
++  echo "Configuring lock screen watch authentication..."
++  as_root tee /etc/pam.d/omarchy-lock-watch >/dev/null <<'EOF'
++#%PAM-1.0
++auth       required                    pam_omamori.so mode=lock
++account    include                     system-local-login
++EOF
++else
++  as_root rm -f /etc/pam.d/omarchy-lock-watch
++fi
++
+ # Install resume recovery alongside fingerprint PAM, so setup and upgrades
+ # cannot leave one configured without the other.
+ resume_hook_src="$OMARCHY_PATH/default/systemd/system-sleep/fprintd-resume"
+diff --git a/shell/plugins/lock/Service.qml b/shell/plugins/lock/Service.qml
+index 17debdf3..7060b072 100644
+--- a/shell/plugins/lock/Service.qml
++++ b/shell/plugins/lock/Service.qml
+@@ -39,6 +39,12 @@ Item {
+   property bool faceConfigured: false
+   property bool faceAuthenticating: false
+   property double faceLastStartMs: 0
++  // A paired watch (omamori) gets a PAM stack of its own too. pam_omamori
++  // blocks until the watch approves or the daemon drops the request, so one
++  // attempt stays open for the whole lock; a failed attempt (daemon down,
++  // not paired) retries on a slow timer. The password path is untouched.
++  property bool watchConfigured: false
++  property bool watchAuthenticating: false
+   // While the lock has the displays off no new attempt starts, so the reader
+   // isn't held awake all night; any wake starts it again.
+   property bool fingerprintPaused: false
+@@ -233,6 +239,9 @@ Item {
+     if (passwordPam.active) passwordPam.abort()
+     if (fingerprintPam.active) fingerprintPam.abort()
+     if (facePam.active) facePam.abort()
++    watchAuthenticating = false
++    watchRetryTimer.stop()
++    if (watchPam.active) watchPam.abort()
+   }
+ 
+   function beginLock() {
+@@ -485,6 +494,26 @@ Item {
+     settleFaceAttempt()
+   }
+ 
++  function startWatch() {
++    if (!lockRequested || !sessionLock.secure || !watchConfigured) return
++    if (watchPam.active || watchAuthenticating) return
++    watchAuthenticating = true
++    if (!watchPam.start()) {
++      watchAuthenticating = false
++      watchRetryTimer.restart()
++    }
++  }
++
++  function handleWatchFinished(result) {
++    watchAuthenticating = false
++    if (result === PamResult.Success && lockRequested) {
++      logEvent("watch-approved")
++      finishUnlock()
++      return
++    }
++    if (lockRequested) watchRetryTimer.restart()
++  }
++
+   function startFingerprint() {
+     if (!lockRequested || !sessionLock.secure || !fingerprintConfigured || fingerprintPaused) return
+     if (fingerprintPam.active || fingerprintAuthenticating) return
+@@ -578,6 +607,7 @@ Item {
+         pendingSessionLockTimer.stop()
+         root.startFingerprint()
+         root.requestFace()
++        root.startWatch()
+       }
+     }
+ 
+@@ -724,6 +754,20 @@ Item {
+     }
+   }
+ 
++  PamContext {
++    id: watchPam
++    config: "omarchy-lock-watch"
++    user: root.userName
++
++    onCompleted: function(result) {
++      root.handleWatchFinished(result)
++    }
++
++    onError: function(error) {
++      root.handleWatchFinished(PamResult.Error)
++    }
++  }
++
+   // The lock only starts decoding its wallpaper once locked, and a machine
+   // suspending right after locking froze that decode partway: waking showed
+   // the password field on a bare background, then the wallpaper popped in.
+@@ -818,6 +862,13 @@ Item {
+     onTriggered: root.timeoutFaceReach()
+   }
+ 
++  Timer {
++    id: watchRetryTimer
++    interval: 5000
++    repeat: false
++    onTriggered: root.startWatch()
++  }
++
+   Process {
+     id: readlinkProc
+     command: ["bash", "-c", "path=$(readlink -f -- \"$1\") && printf '%s\\n%s\\n' \"$path\" \"$(stat -Lc %Y:%s -- \"$path\" 2>/dev/null)\"", "_", root.currentBackgroundLink]
+@@ -1012,6 +1063,18 @@ Item {
+     onFileChanged: reload()
+   }
+ 
++  FileView {
++    path: "/etc/pam.d/omarchy-lock-watch"
++    watchChanges: true
++    printErrors: false
++    onLoaded: {
++      root.watchConfigured = true
++      root.startWatch()
++    }
++    onLoadFailed: root.watchConfigured = false
++    onFileChanged: reload()
++  }
++
+   FileView {
+     path: "/etc/pam.d/omarchy-lock-face"
+     watchChanges: true
+@@ -1066,6 +1129,7 @@ Item {
+         fingerprint: root.fingerprintConfigured,
+         fingerprintUnavailable: root.fingerprintUnavailable,
+         face: root.faceConfigured,
++        watch: root.watchConfigured,
+         authenticating: root.authenticating,
+         lastEvent: root.lastEvent,
+         lastEventAt: root.lastEventAt
+-- 
+2.47.3
+

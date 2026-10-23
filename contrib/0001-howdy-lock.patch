@@ -1,0 +1,414 @@
+From 15df7e484ace4b6b55c68ecc3ec68a158064b7f1 Mon Sep 17 00:00:00 2001
+From: zimagen <zimagen@users.noreply.github.com>
+Date: Fri, 23 Oct 2026 11:09:40 +0900
+Subject: [PATCH] Local: howdy face auth on lock screen
+
+---
+ bin/omarchy-apply-lock                        |  15 +++
+ manual/37-hardware-authentication.md          |   4 +-
+ shell/plugins/lock/FingerprintModel.js        |  10 ++
+ shell/plugins/lock/Service.qml                | 125 ++++++++++++++++--
+ test/shell.d/apply-lock-test.sh               |  11 +-
+ .../lock-fingerprint-service/shell.qml        |   7 +-
+ test/shell.d/lock-fingerprint-retry-test.sh   |   5 +
+ 7 files changed, 163 insertions(+), 14 deletions(-)
+
+diff --git a/bin/omarchy-apply-lock b/bin/omarchy-apply-lock
+index 1472e04a8b..e7fcc1fae4 100755
+--- a/bin/omarchy-apply-lock
++++ b/bin/omarchy-apply-lock
+@@ -40,6 +40,21 @@ auth       required                    pam_faillock.so authsucc
+ account    include                     system-local-login
+ EOF
+ 
++# Face recognition (howdy) gets a stack of its own rather than a line in the
++# fingerprint one: PAM runs modules one after the other, so sharing a stack
++# would leave the reader deaf while the camera looks. The lock runs both
++# stacks side by side. howdy's own abort_if_lid_closed covers the clamshell.
++if [[ -f /usr/lib/security/pam_howdy.so ]]; then
++  echo "Configuring lock screen face authentication..."
++  as_root tee /etc/pam.d/omarchy-lock-face >/dev/null <<'EOF'
++#%PAM-1.0
++auth       required                    pam_howdy.so
++account    include                     system-local-login
++EOF
++else
++  as_root rm -f /etc/pam.d/omarchy-lock-face
++fi
++
+ # Install resume recovery alongside fingerprint PAM, so setup and upgrades
+ # cannot leave one configured without the other.
+ resume_hook_src="$OMARCHY_PATH/default/systemd/system-sleep/fprintd-resume"
+diff --git a/manual/37-hardware-authentication.md b/manual/37-hardware-authentication.md
+index f89c595177..0c93130c1a 100644
+--- a/manual/37-hardware-authentication.md
++++ b/manual/37-hardware-authentication.md
+@@ -6,7 +6,9 @@ A lot of laptops come with a fingerprint sensor to do authentication. You can us
+ 
+ That'll install the fingerprint package, collect your print, verify it, and you'll be set to go using your fingerprint to unlock from the lock screen (which you can trigger with `Super + Ctrl + L`), enter sudo mode, and authorize system prompts.
+ 
+-Once the lock screen has turned the display off, the sensor rests to save power, so wake the screen with any key or the touchpad before touching it.
++Once the lock screen has turned the display off, the sensor rests to save power, so wake the screen with any key or the touchpad before touching it. After the laptop wakes from sleep the lock waits a few seconds before the first fingerprint check, so the reader can come back up.
++
++If [howdy](https://github.com/boltgolt/howdy) is installed, the lock screen also looks for your face: once when it locks, and once more each time the screen wakes or you touch the keyboard or pointer. The camera and the fingerprint reader work side by side, so either one unlocks.
+ 
+ When your laptop lid is closed, the fingerprint prompt is automatically skipped, so you go straight to the password prompt instead of waiting on a sensor you can't reach. If you otherwise need to work on an external keyboard that doesn't have a sensor, just hit `CTRL + C`, when you're prompted for your fingerprint during `sudo`.
+ 
+diff --git a/shell/plugins/lock/FingerprintModel.js b/shell/plugins/lock/FingerprintModel.js
+index b489c7ec2c..876757a28d 100644
+--- a/shell/plugins/lock/FingerprintModel.js
++++ b/shell/plugins/lock/FingerprintModel.js
+@@ -15,6 +15,14 @@ var REACH_TIMEOUT_MS = 20000
+ var SLEEP_GAP_MS = 2000
+ // Ignore transient misses while the asynchronous resume restart lands.
+ var RESUME_GRACE_MS = 5000
++// Hold the first attempt after a wake until the reader has re-enumerated on
++// the USB bus and the resume hook's fprintd restart has landed (3s stop cap).
++// A claim made while either is in flight hangs on a dead handle or reports
++// mismatches with no finger on the sensor.
++var RESUME_RETRY_MS = 3500
++// Face recognition looks once per event (lock, wake, input), never in a loop;
++// this keeps a burst of pointer motion from restarting the camera every frame.
++var FACE_COOLDOWN_MS = 5000
+ 
+ function retryDelayMs(streak) {
+   if (streak <= 0) return MATCH_RETRY_MS
+@@ -81,6 +89,8 @@ if (typeof module !== "undefined") {
+     REACH_TIMEOUT_MS: REACH_TIMEOUT_MS,
+     SLEEP_GAP_MS: SLEEP_GAP_MS,
+     RESUME_GRACE_MS: RESUME_GRACE_MS,
++    RESUME_RETRY_MS: RESUME_RETRY_MS,
++    FACE_COOLDOWN_MS: FACE_COOLDOWN_MS,
+     spannedSleep: spannedSleep,
+     classifyProbe: classifyProbe,
+     inResumeGrace: inResumeGrace,
+diff --git a/shell/plugins/lock/Service.qml b/shell/plugins/lock/Service.qml
+index 644872cb8f..17debdf367 100644
+--- a/shell/plugins/lock/Service.qml
++++ b/shell/plugins/lock/Service.qml
+@@ -32,6 +32,13 @@ Item {
+   property double fingerprintLastSettleMs: 0
+   property double fingerprintResumedAtMs: 0
+   property int fingerprintProbeStreak: 0
++  // Face recognition (howdy) runs in a PAM stack of its own beside the reader,
++  // so a finger is accepted while the camera looks. It looks once per event
++  // (lock, wake, input), never in a loop, so the camera is not on the whole
++  // time the lock is lit.
++  property bool faceConfigured: false
++  property bool faceAuthenticating: false
++  property double faceLastStartMs: 0
+   // While the lock has the displays off no new attempt starts, so the reader
+   // isn't held awake all night; any wake starts it again.
+   property bool fingerprintPaused: false
+@@ -219,8 +226,13 @@ Item {
+     fingerprintRetryTimer.stop()
+     fingerprintReachTimer.stop()
+     fingerprintResumeTimer.stop()
++    faceAuthenticating = false
++    faceLastStartMs = 0
++    faceRetryTimer.stop()
++    faceReachTimer.stop()
+     if (passwordPam.active) passwordPam.abort()
+     if (fingerprintPam.active) fingerprintPam.abort()
++    if (facePam.active) facePam.abort()
+   }
+ 
+   function beginLock() {
+@@ -269,6 +281,7 @@ Item {
+     if (lockRequested) armBlankTimer()
+     resumeFingerprint()
+     nudgeFingerprint()
++    requestFace()
+   }
+ 
+   // An attempt already running is left to finish under its own timeouts, so
+@@ -288,8 +301,8 @@ Item {
+     if (fingerprintSleptWhilePaused) {
+       fingerprintSleptWhilePaused = false
+       noteFingerprintResumed()
+-      fingerprintRetryBackoffMs = FingerprintModel.MATCH_RETRY_MS
+-      fingerprintRetryTimer.interval = FingerprintModel.MATCH_RETRY_MS
++      fingerprintRetryBackoffMs = FingerprintModel.RESUME_RETRY_MS
++      fingerprintRetryTimer.interval = FingerprintModel.RESUME_RETRY_MS
+     } else {
+       fingerprintRetryTimer.interval = Math.max(FingerprintModel.MATCH_RETRY_MS, fingerprintRetryDueMs - Date.now())
+     }
+@@ -311,6 +324,9 @@ Item {
+   // User activity advances retries without recreating a busy retry loop.
+   function nudgeFingerprint() {
+     if (!lockRequested) return
++    // The hold after a wake waits for the reader and daemon to come back; it
++    // is not a backoff that input may cut short.
++    if (FingerprintModel.inResumeGrace(Date.now(), fingerprintResumedAtMs)) return
+     if (!fingerprintConfigured && fingerprintRecheckTimer.running) {
+       var now = Date.now()
+       if (FingerprintModel.shouldNudge(now, fingerprintLastNudgeMs, now - FingerprintModel.IDLE_CLEAR_MS, fingerprintRecheckTimer.interval)) {
+@@ -346,16 +362,19 @@ Item {
+     fingerprintUnreachedStreak = 0
+   }
+ 
+-  // A suspended PAM conversation may be orphaned by the daemon restart.
++  // A suspended PAM conversation may be orphaned by the daemon restart, and
++  // the reader itself resets on the USB bus in the same second the machine
++  // wakes, so the next attempt waits out both rather than claiming at once.
+   function restartFingerprintAfterSleep() {
+     noteFingerprintResumed()
+     if (fingerprintAuthenticating || fingerprintPam.active) {
+       if (fingerprintPam.active) fingerprintPam.abort()
+       settleFingerprintAttempt()
++    } else if (!fingerprintRetryTimer.running) {
+       return
+     }
+-    if (!fingerprintRetryTimer.running) return
+-    armFingerprintRetry(FingerprintModel.MATCH_RETRY_MS)
++    if (!lockRequested || !fingerprintConfigured) return
++    armFingerprintRetry(FingerprintModel.RESUME_RETRY_MS)
+   }
+ 
+   function runBlank() {
+@@ -422,6 +441,50 @@ Item {
+     runWake()
+   }
+ 
++  // One look at the camera. howdy bounds it with its own timeout; the reach
++  // timer closes a claim that never answers.
++  function startFace() {
++    if (!lockRequested || !sessionLock.secure || !faceConfigured || displaysBlank) return
++    if (facePam.active || faceAuthenticating) return
++    var now = Date.now()
++    if (now - faceLastStartMs < FingerprintModel.FACE_COOLDOWN_MS) return
++    faceLastStartMs = now
++    faceAuthenticating = true
++    if (!facePam.start()) {
++      faceAuthenticating = false
++      return
++    }
++    faceReachTimer.restart()
++  }
++
++  // The camera re-enumerates on the USB bus with the reader after a wake, so
++  // a look requested inside the resume grace waits out the same hold.
++  function requestFace() {
++    if (!lockRequested || !faceConfigured) return
++    if (FingerprintModel.inResumeGrace(Date.now(), fingerprintResumedAtMs)) {
++      faceRetryTimer.interval = FingerprintModel.RESUME_RETRY_MS
++      faceRetryTimer.restart()
++      return
++    }
++    startFace()
++  }
++
++  function settleFaceAttempt() {
++    faceAuthenticating = false
++    faceReachTimer.stop()
++  }
++
++  function handleFaceFinished(result) {
++    settleFaceAttempt()
++    if (result === PamResult.Success && lockRequested) finishUnlock()
++  }
++
++  function timeoutFaceReach() {
++    logEvent("face-reach-timeout")
++    if (facePam.active) facePam.abort()
++    settleFaceAttempt()
++  }
++
+   function startFingerprint() {
+     if (!lockRequested || !sessionLock.secure || !fingerprintConfigured || fingerprintPaused) return
+     if (fingerprintPam.active || fingerprintAuthenticating) return
+@@ -468,10 +531,11 @@ Item {
+     var now = Date.now()
+     fingerprintAttemptFastError = !!deviceError && fingerprintAttemptReachedDevice && now - fingerprintAttemptPromptedAtMs < FingerprintModel.FAST_ERROR_MS
+     var usableAttempt = fingerprintAttemptReachedDevice && !fingerprintAttemptFastError
+-    if (!usableAttempt && fingerprintSleepWatch.running
+-        && FingerprintModel.spannedSleep(now - fingerprintSleepWatch.lastTickMs, fingerprintSleepWatch.interval)) {
+-      noteFingerprintResumed()
+-    }
++    // An attempt that was prompted before the sleep and errored on the wake
++    // counts as reached, so the sleep is checked for every outcome.
++    var wokeFromSleep = fingerprintSleepWatch.running
++        && FingerprintModel.spannedSleep(now - fingerprintSleepWatch.lastTickMs, fingerprintSleepWatch.interval)
++    if (wokeFromSleep) noteFingerprintResumed()
+ 
+     // Reached attempts are the steady state (one per swipe window), so only
+     // the misses and the recovery from them leave a trace.
+@@ -485,7 +549,9 @@ Item {
+       logEvent("fingerprint-recovered: streak=" + previousStreak)
+     }
+     fingerprintLastSettleMs = now
+-    armFingerprintRetry(FingerprintModel.retryDelayMs(fingerprintUnreachedStreak))
++    armFingerprintRetry(wokeFromSleep
++      ? Math.max(FingerprintModel.RESUME_RETRY_MS, FingerprintModel.retryDelayMs(fingerprintUnreachedStreak))
++      : FingerprintModel.retryDelayMs(fingerprintUnreachedStreak))
+   }
+ 
+   function handleFingerprintFinished(result) {
+@@ -511,6 +577,7 @@ Item {
+         sessionLockStabilizeTimer.stop()
+         pendingSessionLockTimer.stop()
+         root.startFingerprint()
++        root.requestFace()
+       }
+     }
+ 
+@@ -643,6 +710,20 @@ Item {
+     }
+   }
+ 
++  PamContext {
++    id: facePam
++    config: "omarchy-lock-face"
++    user: root.userName
++
++    onCompleted: function(result) {
++      root.handleFaceFinished(result)
++    }
++
++    onError: function(error) {
++      root.settleFaceAttempt()
++    }
++  }
++
+   // The lock only starts decoding its wallpaper once locked, and a machine
+   // suspending right after locking froze that decode partway: waking showed
+   // the password field on a bare background, then the wallpaper popped in.
+@@ -723,6 +804,20 @@ Item {
+     onTriggered: root.timeoutFingerprintReach()
+   }
+ 
++  Timer {
++    id: faceRetryTimer
++    interval: FingerprintModel.RESUME_RETRY_MS
++    repeat: false
++    onTriggered: root.startFace()
++  }
++
++  Timer {
++    id: faceReachTimer
++    interval: FingerprintModel.REACH_TIMEOUT_MS
++    repeat: false
++    onTriggered: root.timeoutFaceReach()
++  }
++
+   Process {
+     id: readlinkProc
+     command: ["bash", "-c", "path=$(readlink -f -- \"$1\") && printf '%s\\n%s\\n' \"$path\" \"$(stat -Lc %Y:%s -- \"$path\" 2>/dev/null)\"", "_", root.currentBackgroundLink]
+@@ -917,6 +1012,15 @@ Item {
+     onFileChanged: reload()
+   }
+ 
++  FileView {
++    path: "/etc/pam.d/omarchy-lock-face"
++    watchChanges: true
++    printErrors: false
++    onLoaded: root.faceConfigured = true
++    onLoadFailed: root.faceConfigured = false
++    onFileChanged: reload()
++  }
++
+   // No lock before PAM is known good. An answer from before then may be stale --
+   // the failsafe can be cleared from a TTY -- so re-ask rather than act on it.
+   onPasswordPamConfiguredChanged: {
+@@ -961,6 +1065,7 @@ Item {
+         passwordPam: root.passwordPamConfigured,
+         fingerprint: root.fingerprintConfigured,
+         fingerprintUnavailable: root.fingerprintUnavailable,
++        face: root.faceConfigured,
+         authenticating: root.authenticating,
+         lastEvent: root.lastEvent,
+         lastEventAt: root.lastEventAt
+diff --git a/test/shell.d/apply-lock-test.sh b/test/shell.d/apply-lock-test.sh
+index b3cb03ee44..bbc54a5b92 100644
+--- a/test/shell.d/apply-lock-test.sh
++++ b/test/shell.d/apply-lock-test.sh
+@@ -58,6 +58,7 @@ trusted_root_bin="$test_tmp/trusted-root-bin"
+ trusted_fprintd="$test_tmp/trusted-fprintd-list"
+ password_pam="$test_tmp/omarchy-lock-password"
+ fingerprint_pam="$test_tmp/omarchy-lock-fingerprint"
++face_pam="$test_tmp/omarchy-lock-face"
+ attack_marker="$test_tmp/user-fprintd-list-ran"
+ trusted_uid="$test_tmp/trusted-fprintd-list.uid"
+ trusted_args="$test_tmp/trusted-fprintd-list.args"
+@@ -110,6 +111,7 @@ prepare_helper() {
+   awk \
+     -v password_pam="$password_pam" \
+     -v fingerprint_pam="$fingerprint_pam" \
++    -v face_pam="$face_pam" \
+     -v trusted_root_bin="$trusted_root_bin" \
+     -v trusted_fprintd="$trusted_fprintd" \
+     -v keep_root_path="$keep_root_path" \
+@@ -122,6 +124,7 @@ prepare_helper() {
+       line = $0
+       gsub("/etc/pam\\.d/omarchy-lock-password", "\"" password_pam "\"", line)
+       gsub("/etc/pam\\.d/omarchy-lock-fingerprint", "\"" fingerprint_pam "\"", line)
++      gsub("/etc/pam\\.d/omarchy-lock-face", "\"" face_pam "\"", line)
+ 
+       if (line == "if (( EUID == 0 )); then" && keep_root_path == 0) {
+         print "if (( 0 )); then"
+@@ -195,7 +198,7 @@ for helper in "$patched_helper" "$absolute_only_helper" "$root_path_only_helper"
+ done
+ 
+ reset_runtime_files() {
+-  rm -f "$password_pam" "$fingerprint_pam" "$trusted_uid" "$trusted_args" "$attack_marker" "$attack_args"
++  rm -f "$password_pam" "$fingerprint_pam" "$face_pam" "$trusted_uid" "$trusted_args" "$attack_marker" "$attack_args"
+ }
+ 
+ run_as_root() {
+@@ -214,6 +217,12 @@ grep -Fx '0' "$trusted_uid" >/dev/null || fail "the trusted fprintd-list probe r
+ grep -Fx "$target_user" "$trusted_args" >/dev/null || fail "the trusted fprintd-list probe receives the target user"
+ [[ -s $password_pam && -s $fingerprint_pam ]] ||
+   fail "the isolated root lock-helper run writes both scratch PAM fixtures"
++if [[ -f /usr/lib/security/pam_howdy.so ]]; then
++  grep -q 'pam_howdy.so' "$face_pam" || fail "an installed howdy module gets a face stack of its own"
++  ! grep -q 'pam_howdy.so' "$fingerprint_pam" || fail "the fingerprint stack never carries the face module"
++else
++  [[ ! -e $face_pam ]] || fail "no face stack is written without the howdy module"
++fi
+ [[ -x $test_tmp/system-sleep/fprintd-resume ]] ||
+   fail "the lock helper installs the resume hook beside the fingerprint PAM file"
+ [[ -f $test_tmp/fprintd.service.d/10-stop-timeout.conf ]] ||
+diff --git a/test/shell.d/fixtures/lock-fingerprint-service/shell.qml b/test/shell.d/fixtures/lock-fingerprint-service/shell.qml
+index 0580f4e8e7..66c8f628b4 100644
+--- a/test/shell.d/fixtures/lock-fingerprint-service/shell.qml
++++ b/test/shell.d/fixtures/lock-fingerprint-service/shell.qml
+@@ -148,7 +148,10 @@ ShellRoot {
+       service.restartFingerprintAfterSleep()
+       check(!service.fingerprintAuthenticating, "resume settles an in-flight attempt")
+       check(service.fingerprintUnreachedStreak === 1 && !service.fingerprintUnavailable, "resume grace suppresses an unavailable notice")
+-      check(retry.running && retry.interval === 1000, "resume retries without retaining the capped wait")
++      check(retry.running && retry.interval === 3500, "resume retries without retaining the capped wait, after the reader and daemon have settled")
++      service.fingerprintLastNudgeMs = 0
++      service.nudgeFingerprint()
++      check(retry.interval === 3500, "input right after a wake does not cut the hold short")
+       check(service.lockRequested, "resume never unlocks")
+ 
+       service.fingerprintAuthenticating = true
+@@ -220,7 +223,7 @@ ShellRoot {
+       blankTimer.stop()
+       check(!resumeTimer.running, "the watch ends once it sees the sleep")
+       check(!service.fingerprintPaused, "a resume with no input still brings the reader back")
+-      check(retry.running && retry.interval === 250, "a wake after a sleep while blank recovers at once")
++      check(retry.running && retry.interval === 3500, "a wake after a sleep while blank recovers once the reader and daemon have settled")
+       check(service.fingerprintUnreachedStreak === 0, "a sleep while blank opens the resume grace")
+       retry.stop()
+       service.pauseFingerprint()
+diff --git a/test/shell.d/lock-fingerprint-retry-test.sh b/test/shell.d/lock-fingerprint-retry-test.sh
+index eb662b4f7a..248d7e7caa 100755
+--- a/test/shell.d/lock-fingerprint-retry-test.sh
++++ b/test/shell.d/lock-fingerprint-retry-test.sh
+@@ -132,6 +132,11 @@ assertEqual(model.nextStreak(1, false, false), 2, 'outside the grace misses accu
+ assert(model.RESUME_GRACE_MS >= 3000 + 1000, "the grace outlasts fprintd's 3s stop cap plus its start")
+ assert(model.RESUME_GRACE_MS < model.ERROR_RETRY_CAP_MS, 'the grace is shorter than the cap, so it cannot mask a reader that is really gone')
+ assert(!model.inResumeGrace(5000, 0), 'no resume noted means no grace')
++// The reader resets on the USB bus as the machine wakes and the resume hook
++// restarts fprintd (3s stop cap): the first attempt waits for both, and stays
++// inside the grace so a miss on it cannot show the notice.
++assert(model.RESUME_RETRY_MS >= 3000, 'the first attempt after a wake outlasts the daemon restart')
++assert(model.RESUME_RETRY_MS < model.RESUME_GRACE_MS, 'the first attempt after a wake settles inside the grace')
+ assert(model.inResumeGrace(1000 + model.RESUME_GRACE_MS - 1, 1000), 'an attempt settling inside the window is in grace')
+ assert(!model.inResumeGrace(1000 + model.RESUME_GRACE_MS, 1000), 'an attempt settling at the window edge is not')
+ assert(!model.inResumeGrace(500, 1000), 'a clock stepped back past the resume is not grace')
+-- 
+2.56.0
+
