@@ -10,7 +10,7 @@ rust-version = "1.99.0"
 [workspace.dependencies]
 hmac = "0.12"
 sha2 = "0.10"
-hkdf = "0.12"
+hkdf = "0.13"
 p256 = { version = "0.13", features = ["ecdh"] }
 subtle = "2.6"
 zeroize = { version = "1.8", features = ["derive"] }
