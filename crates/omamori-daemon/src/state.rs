@@ -1,7 +1,8 @@
 use anyhow::{Context, Result, bail};
+use getrandom::SysRng;
 use nix::{libc, unistd::geteuid};
 use omamori_proto::{crypto::Key, wire::HostId};
-use rand_core::{OsRng, RngCore};
+use rand_core::{Rng, UnwrapErr};
 use serde::{Deserialize, Serialize};
 use std::{
     fs::{self, File, OpenOptions},
@@ -118,7 +119,7 @@ impl Store {
             serde_json::from_str(&text).map_err(|_| anyhow::anyhow!("invalid state.json; expected host_id and optional pairing (watch_name, key, time)"))?
         } else {
             let mut host_id = [0; 16];
-            OsRng.fill_bytes(&mut host_id);
+            UnwrapErr(SysRng).fill_bytes(&mut host_id);
             let state = State {
                 host_id,
                 pairing: None,
@@ -130,7 +131,7 @@ impl Store {
     }
     pub fn save(&self, state: &State) -> Result<()> {
         let mut random = [0; 8];
-        OsRng.fill_bytes(&mut random);
+        UnwrapErr(SysRng).fill_bytes(&mut random);
         let temp = self
             .dir
             .join(format!(".state-{:016x}.tmp", u64::from_be_bytes(random)));

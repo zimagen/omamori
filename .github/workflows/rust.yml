@@ -65,6 +65,11 @@ jobs:
           echo "$exported"
           test "$exported" = "$(printf 'pam_sm_authenticate\npam_sm_setcred')"
 
+      - name: cargo audit (RustSec advisories)
+        run: |
+          cargo install cargo-audit --locked --version 0.22.2
+          cargo audit --deny warnings
+
       - name: Test vectors are reproducible
         run: |
           cargo run --locked -q -p omamori-proto --example gen-vectors > "$RUNNER_TEMP/v1.json"

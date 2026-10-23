@@ -1,9 +1,12 @@
 //! RustCrypto primitives and the exact v1 domain-separated constructions.
 use crate::wire::{Entry, HostId, Mac, Nonce, RequestId};
 use hkdf::Hkdf;
-use hmac::{Hmac, Mac as _};
-use p256::{PublicKey, SecretKey, elliptic_curve::sec1::ToEncodedPoint};
-use rand_core::CryptoRngCore;
+use hmac::{Hmac, KeyInit as _, Mac as _};
+use p256::{
+    PublicKey, SecretKey,
+    elliptic_curve::{Generate, sec1::ToSec1Point},
+};
+use rand_core::CryptoRng;
 use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
 use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
@@ -34,8 +37,8 @@ pub enum Error {
 /// P-256 private scalars are zeroized on drop by RustCrypto's SecretKey.
 pub struct KeyPair(SecretKey);
 impl KeyPair {
-    pub fn random(rng: &mut impl CryptoRngCore) -> Self {
-        Self(SecretKey::random(rng))
+    pub fn random(rng: &mut impl CryptoRng) -> Self {
+        Self(SecretKey::generate_from_rng(rng))
     }
     /// For fixed test vectors. The scalar must be nonzero and below the order.
     pub fn from_scalar(bytes: &[u8; 32]) -> Result<Self, Error> {
@@ -46,7 +49,7 @@ impl KeyPair {
     pub fn public(&self) -> [u8; 65] {
         self.0
             .public_key()
-            .to_encoded_point(false)
+            .to_sec1_point(false)
             .as_bytes()
             .try_into()
             .expect("uncompressed P-256")

@@ -5,7 +5,7 @@ use crate::{
     crypto::{self, Key, KeyPair},
     wire::{self, Entry, HostId, Message, Nonce, RequestId},
 };
-use rand_core::CryptoRngCore;
+use rand_core::CryptoRng;
 use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Debug)]
@@ -94,7 +94,7 @@ impl Session {
     pub fn receive(
         &mut self,
         bytes: &[u8],
-        rng: &mut impl CryptoRngCore,
+        rng: &mut impl CryptoRng,
     ) -> Result<Output<Event>, wire::Error> {
         if self.closed {
             return Err(wire::Error::Closed);
@@ -232,7 +232,7 @@ impl Session {
         &mut self,
         message: Message,
         bytes: &[u8],
-        rng: &mut impl CryptoRngCore,
+        rng: &mut impl CryptoRng,
     ) -> Result<Output<Event>, wire::Error> {
         let mut out = Output::default();
         let pair = self.pairing.as_mut().ok_or(wire::Error::State)?;

@@ -19,4 +19,5 @@ omamori-proto = { path = "../omamori-proto" }
 tokio = { version = "1", features = ["full"] }
 tempfile = "3"
 rand_core.workspace = true
+getrandom.workspace = true
 serde_json.workspace = true

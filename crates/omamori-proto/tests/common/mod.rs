@@ -5,31 +5,30 @@ use omamori_proto::{
     host, watch,
     wire::{Entry, Kind},
 };
-use rand_core::{CryptoRng, RngCore};
+use rand_core::{Rng as _, TryCryptoRng, TryRng};
 
 // Deliberately deterministic and confined to tests. Never use for real secrets.
 pub struct Rng(pub u64);
-impl RngCore for Rng {
-    fn next_u32(&mut self) -> u32 {
-        self.next_u64() as u32
+impl TryRng for Rng {
+    type Error = std::convert::Infallible;
+
+    fn try_next_u32(&mut self) -> Result<u32, Self::Error> {
+        Ok(self.next_u64() as u32)
     }
-    fn next_u64(&mut self) -> u64 {
+    fn try_next_u64(&mut self) -> Result<u64, Self::Error> {
         self.0 ^= self.0 << 13;
         self.0 ^= self.0 >> 7;
         self.0 ^= self.0 << 17;
-        self.0
+        Ok(self.0)
     }
-    fn fill_bytes(&mut self, bytes: &mut [u8]) {
+    fn try_fill_bytes(&mut self, bytes: &mut [u8]) -> Result<(), Self::Error> {
         for part in bytes.chunks_mut(8) {
             part.copy_from_slice(&self.next_u64().to_le_bytes()[..part.len()]);
         }
-    }
-    fn try_fill_bytes(&mut self, bytes: &mut [u8]) -> Result<(), rand_core::Error> {
-        self.fill_bytes(bytes);
         Ok(())
     }
 }
-impl CryptoRng for Rng {}
+impl TryCryptoRng for Rng {}
 
 pub fn entry(id: u8, kind: Kind, needs_confirm: bool, age_s: u16) -> Entry {
     Entry {

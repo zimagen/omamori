@@ -5,7 +5,7 @@ use crate::{
     crypto::{self, Key, KeyPair},
     wire::{self, Entry, HostId, Message, Nonce, RequestId},
 };
-use rand_core::CryptoRngCore;
+use rand_core::CryptoRng;
 use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Debug)]
@@ -49,7 +49,7 @@ impl Session {
     pub fn authenticated(
         host_id: HostId,
         key: Key,
-        rng: &mut impl CryptoRngCore,
+        rng: &mut impl CryptoRng,
     ) -> (Self, Output<Event>) {
         let mut nonce = [0; 16];
         rng.fill_bytes(&mut nonce);
@@ -76,7 +76,7 @@ impl Session {
         (session, out)
     }
 
-    pub fn pairing(watch_name: &str, rng: &mut impl CryptoRngCore) -> (Self, Output<Event>) {
+    pub fn pairing(watch_name: &str, rng: &mut impl CryptoRng) -> (Self, Output<Event>) {
         let ephemeral = KeyPair::random(rng);
         let mut nonce = [0; 16];
         rng.fill_bytes(&mut nonce);
@@ -264,7 +264,7 @@ impl Session {
     }
 
     /// Refresh only after all outstanding Result messages have arrived.
-    pub fn refresh(&mut self, rng: &mut impl CryptoRngCore) -> Result<Output<Event>, wire::Error> {
+    pub fn refresh(&mut self, rng: &mut impl CryptoRng) -> Result<Output<Event>, wire::Error> {
         if self.closed {
             return Err(wire::Error::Closed);
         }

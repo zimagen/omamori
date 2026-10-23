@@ -4,7 +4,7 @@ use omamori_proto::{
     framing::{self, Reassembler},
     wire::{self, Kind, Message},
 };
-use rand_core::RngCore;
+use rand_core::Rng as _;
 
 fn messages() -> Vec<Message> {
     vec![

@@ -50,9 +50,10 @@ sessions with the stored key. Failure drops ephemeral and derived secrets.
 shared secrets use RustCrypto's zeroizing types. Callers must protect any key
 copies they explicitly make for persistence.
 
-All randomness comes from the supplied `CryptoRngCore`. Production callers can
-use `rand_core::OsRng`; the deterministic RNG under `tests/common` is only for
-tests. The fixed scalars and keys in the vector generator are public fixtures.
+All randomness comes from the supplied `CryptoRng`. Production callers can
+use `rand_core::UnwrapErr(getrandom::SysRng)` (with getrandom's `sys_rng`
+feature); the deterministic RNG under `tests/common` is only for tests. The
+fixed scalars and keys in the vector generator are public fixtures.
 
 The transport owner handles scanning, connection ownership, persistence and
 clocks. Drop sessions and reassemblers on disconnect or timeout: 60 seconds of

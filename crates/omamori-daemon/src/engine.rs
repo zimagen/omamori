@@ -5,6 +5,7 @@ use crate::{
     transport::{Event, Transport},
 };
 use anyhow::Result;
+use getrandom::SysRng;
 use omamori_proto::{
     Output,
     crypto::Key,
@@ -12,7 +13,7 @@ use omamori_proto::{
     host,
     wire::{self, Entry, Kind, RequestId},
 };
-use rand_core::{OsRng, RngCore};
+use rand_core::{Rng, UnwrapErr};
 use serde_json::{Value, json};
 use std::{collections::BTreeMap, time::Duration};
 use tokio::{sync::mpsc, time::Instant};
@@ -233,7 +234,7 @@ impl<T: Transport> Engine<T> {
                         }
                         let mut req_id = [0; 8];
                         loop {
-                            OsRng.fill_bytes(&mut req_id);
+                            UnwrapErr(SysRng).fill_bytes(&mut req_id);
                             if !self.requests.contains_key(&req_id) {
                                 break;
                             }
@@ -471,7 +472,7 @@ impl<T: Transport> Engine<T> {
                 let snapshot = self.snapshot();
                 if let Some(session) = self.session.as_mut() {
                     session.set_pending(snapshot)?;
-                    match session.receive(&bytes, &mut OsRng) {
+                    match session.receive(&bytes, &mut UnwrapErr(SysRng)) {
                         Ok(out) => self.output(out).await?,
                         Err(_) => {
                             self.fail_pair("protocol");

@@ -287,8 +287,11 @@ int pam_sm_setcred(pam_handle_t *p,int f,int n,const char **v){return PAM_IGNORE
     async fn approve(&mut self, lock: bool) {
         self.pending(1).await;
         self.peer.incoming.send(Event::Connected).await.unwrap();
-        let (mut watch, hello) =
-            watch::Session::authenticated(self.host_id, Key::new([7; 32]), &mut rand_core::OsRng);
+        let (mut watch, hello) = watch::Session::authenticated(
+            self.host_id,
+            Key::new([7; 32]),
+            &mut rand_core::UnwrapErr(getrandom::SysRng),
+        );
         self.send(hello).await;
         let mut framing = Reassembler::new(20).unwrap();
         let bytes = timeout(Duration::from_secs(3), async {

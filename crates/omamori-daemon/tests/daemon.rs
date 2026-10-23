@@ -1,4 +1,5 @@
 #![cfg(feature = "test-harness")]
+use getrandom::SysRng;
 use nix::unistd::{Uid, User};
 use omamori_daemon::{
     Daemon,
@@ -18,7 +19,7 @@ use omamori_proto::{
     watch,
     wire::{Kind, Message},
 };
-use rand_core::OsRng;
+use rand_core::UnwrapErr;
 use serde_json::{Value, json};
 use std::{
     fs,
@@ -186,8 +187,11 @@ impl Harness {
     async fn authenticate(&mut self, key: [u8; 32]) -> (watch::Session, Output<watch::Event>) {
         self.advertising(false).await;
         self.connect().await;
-        let (mut watch, hello) =
-            watch::Session::authenticated(self.state().host_id, Key::new(key), &mut OsRng);
+        let (mut watch, hello) = watch::Session::authenticated(
+            self.state().host_id,
+            Key::new(key),
+            &mut UnwrapErr(SysRng),
+        );
         self.send(hello).await;
         let out = watch.receive(&self.receive().await).unwrap();
         (watch, out)
@@ -376,7 +380,7 @@ async fn pair_watch(h: &mut Harness, host_first: bool) -> ([u8; 32], [u8; 16]) {
         .send(json!({"op":"pair-confirm","accept":true}))
         .await;
     assert_eq!(competing.event().await["ev"], "denied");
-    let (mut watch, commit) = watch::Session::pairing("New Venu", &mut OsRng);
+    let (mut watch, commit) = watch::Session::pairing("New Venu", &mut UnwrapErr(SysRng));
     h.connect().await;
     h.send(commit).await;
     let reveal = watch.receive(&h.receive().await).unwrap();
@@ -517,7 +521,7 @@ async fn disconnect_resets_authentication_and_unpair_cancels_requests() {
     h.peer.incoming.send(Event::Disconnected).await.unwrap();
     h.connect().await;
     let (_, hello) =
-        watch::Session::authenticated(h.state().host_id, Key::new([7; 32]), &mut OsRng);
+        watch::Session::authenticated(h.state().host_id, Key::new([7; 32]), &mut UnwrapErr(SysRng));
     h.send(hello).await;
     let _ = h.receive().await;
     h.send(stale).await;
