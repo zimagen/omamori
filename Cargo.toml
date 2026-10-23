@@ -11,7 +11,7 @@ rust-version = "1.99.0"
 hmac = "0.12"
 sha2 = "0.10"
 hkdf = "0.12"
-p256 = { version = "0.13", features = ["ecdh"] }
+p256 = { version = "0.14", features = ["ecdh"] }
 subtle = "2.6"
 zeroize = { version = "1.8", features = ["derive"] }
 rand_core = { version = "0.6", features = ["getrandom"] }
