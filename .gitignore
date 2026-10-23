@@ -7,3 +7,4 @@ packaging/*.pkg.tar.*
 packaging/src/
 packaging/pkg/
 watch/logs/
+.codex-tasks/

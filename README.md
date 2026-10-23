@@ -26,9 +26,12 @@ flash extraction and debug interfaces are outside this protection.
 Pairing uses numeric comparison: accept only if the codes on both devices
 match. Authenticated request lists and approvals bind the displayed request
 contents; an approval authorizes one request. The default `per-type` policy
-requires confirmation for sudo. Changing `approval` to `auto` also makes
-sudo approvals automatic. See [DESIGN.md](DESIGN.md) for the protocol and
-complete threat model.
+requires confirmation for sudo. Changing `approval` to `auto` in
+`/etc/omamori/config.toml` also makes sudo approvals automatic. **Risk of
+`auto`:** a process running as you can start `sudo` in the background and
+leave it waiting; your next button hold then approves it without showing the
+command. One hold still approves at most one request. See
+[DESIGN.md](DESIGN.md) for the protocol and complete threat model.
 
 Out of scope: BLE relay attacks, proximity unlock, login/TTY authentication,
 polkit, LUKS, phone relay, iOS, and multiple watches per PC. User malware must
