@@ -19,7 +19,7 @@ omamori-proto = { path = "../omamori-proto" }
 tokio = { version = "1", features = ["full"] }
 serde = { version = "1", features = ["derive"] }
 serde_json.workspace = true
-toml = "0.8"
+toml = "1.1"
 nix = { version = "0.29", features = ["user", "fs"] }
 rand_core.workspace = true
 tracing = "0.1"
