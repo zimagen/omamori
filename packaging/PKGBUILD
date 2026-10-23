@@ -1,0 +1,30 @@
+# Build with makepkg -si from this directory in a complete Omamori checkout.
+pkgname=omamori
+pkgver=0.1.0
+pkgrel=1
+pkgdesc='Unlock sudo and the lock screen with a Garmin watch'
+arch=('x86_64')
+url='https://github.com/zimagen/omamori'
+license=('MIT')
+depends=('bluez' 'dbus' 'pam' 'glibc')
+makedepends=('cargo')
+install=omamori.install
+source=()
+sha256sums=()
+
+build() {
+  cd "$startdir/.."
+  # Use a known target directory even if the caller sets CARGO_TARGET_DIR.
+  cargo build --target-dir "$startdir/../target" --release --locked \
+    -p omamori-daemon -p pam-omamori -p omamori-cli
+}
+
+package() {
+  cd "$startdir/.."
+  install -Dm755 target/release/omamorid "$pkgdir/usr/bin/omamorid"
+  install -Dm755 target/release/omamori "$pkgdir/usr/bin/omamori"
+  install -Dm755 target/release/libpam_omamori.so "$pkgdir/usr/lib/security/pam_omamori.so"
+  install -Dm644 packaging/omamorid.service "$pkgdir/usr/lib/systemd/system/omamorid.service"
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+  install -Dm644 README.md "$pkgdir/usr/share/doc/$pkgname/README.md"
+}

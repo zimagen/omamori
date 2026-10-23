@@ -20,7 +20,10 @@ struct Args {
 }
 #[derive(Subcommand)]
 enum Command {
-    Status,
+    Status {
+        #[arg(long)]
+        json: bool,
+    },
     Pair,
     Unpair,
     SetupPam {
@@ -52,9 +55,17 @@ fn main() -> Result<()> {
     {
         return setup(file.as_deref(), undo, yes, skip_module_check);
     }
-    let mut socket = UnixStream::connect(args.socket).context("connect to omamorid")?;
+    let json_status = matches!(args.command, Command::Status { json: true });
+    let mut socket = match UnixStream::connect(args.socket) {
+        Ok(socket) => socket,
+        Err(_) if json_status => {
+            println!("{{\"daemon\":false}}");
+            return Ok(());
+        }
+        Err(error) => return Err(error).context("connect to omamorid"),
+    };
     let input = match args.command {
-        Command::Status => Input::Status {},
+        Command::Status { .. } => Input::Status {},
         Command::Pair => Input::PairBegin {},
         Command::Unpair => Input::Unpair {},
         _ => unreachable!(),
@@ -63,6 +74,10 @@ fn main() -> Result<()> {
     loop {
         match omamori_ipc::receive(&mut socket)? {
             Event::Status { fields } => {
+                if json_status {
+                    println!("{}", serde_json::to_string(&fields)?);
+                    return Ok(());
+                }
                 for (key, value) in fields {
                     println!("{key}: {value}");
                 }

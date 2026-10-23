@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "id": "io.github.zimagen.omamori",
+  "name": "Omamori",
+  "version": "0.1.0",
+  "author": "zimagen",
+  "license": "MIT",
+  "description": "Unlock sudo and the lock screen with a Garmin watch.",
+  "kinds": ["bar-widget"],
+  "entryPoints": {"barWidget": "BarWidget.qml"},
+  "barWidget": {
+    "displayName": "Omamori",
+    "description": "Unlock sudo and the lock screen with a Garmin watch.",
+    "category": "System",
+    "allowMultiple": false,
+    "defaultSection": "right"
+  }
+}

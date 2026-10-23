@@ -1,0 +1,22 @@
+post_install() {
+  cat <<'STEPS'
+Omamori next steps:
+  sudo systemctl enable --now omamorid.service
+  Install the Omamori watch app and assign a button shortcut.
+  sudo omamori pair
+  sudo omamori setup-pam
+See /usr/share/doc/omamori/README.md for the widget and lock-screen patches.
+STEPS
+}
+
+pre_remove() {
+  if [[ -f /etc/pam.d/sudo ]] && grep -q '# omamori' /etc/pam.d/sudo; then
+    cat <<'WARNING'
+*** WARNING: Omamori is still configured in /etc/pam.d/sudo! ***
+Before removing the package, undo that configuration with:
+  sudo omamori setup-pam --undo
+The leading '-' on the Omamori PAM line means sudo keeps working even
+if pam_omamori.so disappears. Remove the stale line to finish cleanup.
+WARNING
+  fi
+}

@@ -1,12 +1,16 @@
 # omamori
 
-`omamori status` displays daemon status. `sudo omamori pair` displays the
+`omamori status` displays daemon status. `omamori status --json` prints
+the exact daemon status fields as one JSON object (without the IPC `ev` tag).
+If the daemon cannot be reached, JSON mode prints `{"daemon":false}` and
+exits 0; plain status exits 1. `sudo omamori pair` displays the
 watch's code and asks `Do the codes match? [y/N]`; only explicit acceptance
 confirms pairing. `sudo omamori unpair` removes the pairing. Use
 `--socket PATH` with any of these commands to select another daemon socket.
 
 `sudo omamori setup-pam` shows a unified diff and asks before adding the
-marked module line before the first `auth` or `-auth` line in
+marked module line after `pam_howdy.so` if present, otherwise before the
+first `auth` or `-auth` line in
 `/etc/pam.d/sudo`. `--yes` accepts the displayed edit; `--undo` removes only
 lines ending in `# omamori`. Repeated installation is idempotent. Changes
 preserve file mode and owner, create a timestamped backup, and atomically
