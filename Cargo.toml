@@ -8,7 +8,7 @@ license = "MIT"
 rust-version = "1.99.0"
 
 [workspace.dependencies]
-hmac = "0.12"
+hmac = "0.13"
 sha2 = "0.10"
 hkdf = "0.12"
 p256 = { version = "0.13", features = ["ecdh"] }
