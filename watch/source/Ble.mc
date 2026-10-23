@@ -8,7 +8,10 @@ class Ble extends BluetoothLowEnergy.BleDelegate {
     var candidates as Array<Candidate> = [];var hosts as Array<Host> = [];var queue as Array<ByteArray> = [];var busy=false;var ready=false;
     var frames;var scanTimer;var collectTimer;var sessionTimer;var writeTimer;
     // Sticky across reconnects and refreshes for this app run.
-    var writeWithResponse=false;
+    // Write-without-response dropped the link on a real Venu 4 (2 of 4 runs:
+    // all chunks "acked" locally, PC disconnected before the Approve arrived).
+    // Default to with-response; flip to false only for experiments.
+    var writeWithResponse=true;
     function initialize(o) {
         BleDelegate.initialize();owner=o;frames=new Reassembler();
         service=BluetoothLowEnergy.stringToUuid("4f6d616d-6f72-6900-0001-000000000000");
