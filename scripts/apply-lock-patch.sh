@@ -9,9 +9,12 @@ cd "$OM"
 # Clean up an interrupted `git am` (e.g. one that waited on stdin).
 if [[ -d .git/rebase-apply ]]; then git am --abort; fi
 [[ $(git branch --show-current) == local/auth ]] || { echo "not on local/auth" >&2; exit 1; }
+# Read the log once: `git log | grep -q` under pipefail fails with SIGPIPE when
+# grep exits early, which made applied patches look missing.
+applied=$(git log --format=%s -50)
 for patch in "$CONTRIB"/0[0-9][0-9][0-9]-omamori-*.patch; do
   subject=$(sed -n 's/^Subject: \[PATCH\] //p' "$patch" | head -1)
-  if git log --format=%s -50 | grep -qxF "$subject"; then
+  if grep -qxF "$subject" <<<"$applied"; then
     echo "already applied: $subject"
   else
     git am "$patch"
