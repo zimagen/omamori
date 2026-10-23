@@ -1,19 +1,24 @@
 #!/bin/bash
-# Dev helper: apply contrib/0002 (omamori watch stack) onto ~/omarchy local/auth
-# and regenerate the lock-screen PAM files. Does not lock the screen.
+# Dev helper: apply the omamori lock-screen patches (contrib/0002, 0003, ...)
+# onto ~/omarchy local/auth, skipping ones already applied, then regenerate
+# the lock-screen PAM files. Does not lock the screen.
 set -euo pipefail
-PATCH="$(cd "$(dirname "$0")/.." && pwd)/contrib/0002-omamori-watch-lock.patch"
+CONTRIB="$(cd "$(dirname "$0")/.." && pwd)/contrib"
 OM=${OMARCHY_PATH:-$HOME/omarchy}
 cd "$OM"
 # Clean up an interrupted `git am` (e.g. one that waited on stdin).
 if [[ -d .git/rebase-apply ]]; then git am --abort; fi
 [[ $(git branch --show-current) == local/auth ]] || { echo "not on local/auth" >&2; exit 1; }
-if git log --format=%s -20 | grep -qx "Local: omamori watch unlock on lock screen"; then
-  echo "patch already applied"
-else
-  git am "$PATCH"
-fi
-git log --oneline -3
+for patch in "$CONTRIB"/0[0-9][0-9][0-9]-omamori-*.patch; do
+  subject=$(sed -n 's/^Subject: \[PATCH\] //p' "$patch" | head -1)
+  if git log --format=%s -50 | grep -qxF "$subject"; then
+    echo "already applied: $subject"
+  else
+    git am "$patch"
+  fi
+done
+git log --oneline -4
 omarchy-apply-lock
 echo "== /etc/pam.d/omarchy-lock-watch"
 cat /etc/pam.d/omarchy-lock-watch
+echo "Log out and back in so omarchy-shell reloads the lock screen."
