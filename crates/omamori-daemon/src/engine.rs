@@ -53,6 +53,9 @@ pub(crate) struct Engine<T> {
     connected: bool,
     advertising: Option<[u8; 9]>,
     last_activity: Instant,
+    connected_at: Option<Instant>,
+    // Retain the queue origin through removal of the final approved request.
+    timing_queued_at: Option<Instant>,
 }
 fn emit(reply: &mpsc::Sender<Value>, value: Value) {
     let _ = reply.try_send(value);
@@ -88,12 +91,29 @@ impl<T: Transport> Engine<T> {
             connected: false,
             advertising: None,
             last_activity: Instant::now(),
+            connected_at: None,
+            timing_queued_at: None,
         }
+    }
+    fn queued_at(&self) -> Option<Instant> {
+        self.requests.values().map(|r| r.created).min()
+    }
+    fn log_timing(&self, message: &'static str, queued_at: Option<Instant>, count: Option<usize>) {
+        let since_queued_ms = queued_at.map(|t| t.elapsed().as_millis() as u64);
+        let since_connect_ms = self.connected_at.map(|t| t.elapsed().as_millis() as u64);
+        let mode = self
+            .advertising
+            .map(|data| if data[8] & 1 != 0 { "pairing" } else { "auth" });
+        tracing::info!(since_queued_ms, since_connect_ms, count, mode, "{message}");
+    }
+    fn log_session_timing(&self, message: &'static str, count: Option<usize>) {
+        self.log_timing(message, self.queued_at().or(self.timing_queued_at), count);
     }
     async fn reset(&mut self) {
         self.session = None;
         self.reassembler.reset();
         self.connected = false;
+        self.connected_at = None;
         if let Err(e) = self.transport.disconnect().await {
             tracing::warn!(error = %e, "BLE disconnect failed");
         }
@@ -222,13 +242,22 @@ impl<T: Transport> Engine<T> {
                             },
                         };
                         emit(&reply, json!({"ev":"queued","id":hex(&req_id)}));
+                        let created = Instant::now();
+                        let since_connect_ms =
+                            self.connected_at.map(|t| t.elapsed().as_millis() as u64);
+                        tracing::info!(
+                            kind = if kind == Kind::Lock { "lock" } else { "sudo" },
+                            since_queued_ms = 0_u64,
+                            since_connect_ms,
+                            "request queued"
+                        );
                         self.requests.insert(
                             req_id,
                             Request {
                                 conn: id,
                                 uid,
                                 entry,
-                                created: Instant::now(),
+                                created,
                                 reply,
                             },
                         );
@@ -304,8 +333,10 @@ impl<T: Transport> Engine<T> {
         for event in out.events {
             match event {
                 host::Event::Approved(id) => {
-                    if let Some(r) = self.requests.remove(&id) {
-                        emit(&r.reply, json!({"ev":"approved"}));
+                    if let Some(r) = self.requests.remove(&id)
+                        && r.reply.try_send(json!({"ev":"approved"})).is_ok()
+                    {
+                        self.log_timing("approval delivered to IPC client", Some(r.created), None);
                     }
                 }
                 host::Event::PairCode(code, watch_name) => {
@@ -327,16 +358,17 @@ impl<T: Transport> Engine<T> {
             }
         }
         for message in out.messages {
-            if matches!(
-                wire::Message::decode(&message),
-                Ok(wire::Message::Result { status: 2, .. })
-            ) {
+            let decoded = wire::Message::decode(&message);
+            if matches!(decoded, Ok(wire::Message::Result { status: 2, .. })) {
                 tracing::warn!("bad approval MAC; closing BLE session");
             }
             for chunk in framing::chunk(&message, 20)
                 .map_err(|e| anyhow::anyhow!("outgoing frame: {e:?}"))?
             {
                 self.transport.send(chunk).await?;
+            }
+            if let Ok(wire::Message::Pending { entries, .. }) = decoded {
+                self.log_session_timing("Pending sent", Some(entries.len()));
             }
         }
         if completed_pair && let Some(owner) = self.pairing.take() {
@@ -359,6 +391,9 @@ impl<T: Transport> Engine<T> {
                     return Ok(());
                 }
                 self.connected = true;
+                self.connected_at = Some(Instant::now());
+                self.timing_queued_at = self.queued_at();
+                self.log_session_timing("central connected", None);
                 self.reassembler.reset();
                 self.session = if self.pairing.is_some() {
                     Some(host::Session::pairing(
@@ -402,6 +437,19 @@ impl<T: Transport> Engine<T> {
                         return Ok(());
                     }
                 };
+                match wire::Message::decode(&bytes) {
+                    Ok(wire::Message::AuthHello { .. }) => {
+                        self.log_session_timing("AuthHello received", None);
+                    }
+                    Ok(wire::Message::Approve { req_id, .. }) => {
+                        self.log_timing(
+                            "Approve received",
+                            self.requests.get(&req_id).map(|r| r.created),
+                            None,
+                        );
+                    }
+                    _ => {}
+                }
                 let snapshot = self.snapshot();
                 if let Some(session) = self.session.as_mut() {
                     session.set_pending(snapshot)?;
@@ -418,9 +466,10 @@ impl<T: Transport> Engine<T> {
         Ok(())
     }
     fn log_advertising_stopped(&mut self) {
-        if let Some(data) = self.advertising.take() {
-            let mode = if data[8] & 1 != 0 { "pairing" } else { "auth" };
-            tracing::info!(mode, "advertising stopped");
+        if self.advertising.is_some() {
+            self.log_session_timing("advertising stopped", None);
+            self.advertising = None;
+            self.timing_queued_at = None;
         }
     }
     async fn update_advertising(&mut self) {
@@ -453,9 +502,9 @@ impl<T: Transport> Engine<T> {
                 return;
             }
             self.advertising = wanted;
-            if let Some(data) = wanted {
-                let mode = if data[8] & 1 != 0 { "pairing" } else { "auth" };
-                tracing::info!(mode, "advertising started");
+            if wanted.is_some() {
+                self.timing_queued_at = self.queued_at();
+                self.log_session_timing("advertising started", None);
             }
         }
     }

@@ -32,6 +32,7 @@ class OmamoriView extends WatchUi.View {
         if(perPage<1) {perPage=1;}pages=(wrapped.size()+perPage-1)/perPage;if(pages<1) {pages=1;}if(page>=pages) {page=pages-1;}
         var start=page*perPage;var end=start+perPage;if(end>wrapped.size()) {end=wrapped.size();}
         for(var i=start;i<end;i++) {dc.drawText(width/2,80+(i-start)*lineHeight,Graphics.FONT_XTINY,wrapped[i],Graphics.TEXT_JUSTIFY_CENTER);}
+        if(list.size()==0 && owner.code==null && owner.timingSummary!=null) {dc.drawText(width/2,80+lineHeight,Graphics.FONT_XTINY,owner.timingSummary,Graphics.TEXT_JUSTIFY_CENTER);}
         if(page<pages-1) {foot="Tap to read more";}
         dc.drawText(width/2,height-77,Graphics.FONT_XTINY,foot,Graphics.TEXT_JUSTIFY_CENTER);
         if(list.size()>0) {dc.drawText(width/2,height-48,Graphics.FONT_XTINY,(current+1)+" / "+list.size()+(owner.hasMore()?"  + more":""),Graphics.TEXT_JUSTIFY_CENTER);}

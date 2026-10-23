@@ -1,7 +1,7 @@
 # Build with makepkg -si from this directory in a complete Omamori checkout.
 pkgname=omamori
 pkgver=0.1.0
-pkgrel=2
+pkgrel=3
 pkgdesc='Unlock sudo and the lock screen with a Garmin watch'
 arch=('x86_64')
 url='https://github.com/zimagen/omamori'

@@ -7,16 +7,18 @@ import Toybox.WatchUi;
 
 class OmamoriApp extends Application.AppBase {
     var ble;var session;var view;var status="Scanning for PC…";var code;var pairHost;
+    var timingSummary=null;var exitMarked=false;
     var exitTimer;var launchTimer;var finish=false;var rejecting=false;var menuOpen=false;
-    function initialize() {AppBase.initialize();exitTimer=new Timer.Timer();launchTimer=new Timer.Timer();}
+    function initialize() {Trace.initialize();Trace.mark("app-init");AppBase.initialize();exitTimer=new Timer.Timer();launchTimer=new Timer.Timer();}
+    function onStart(state) {Trace.mark("app-start");}
     function getInitialView() {
         view=new OmamoriView(self);ble=new Ble(self);
         launchTimer.start(method(:launch),100,false);
         return [view,new OmamoriInput(self,view)];
     }
-    function launch() {begin(Store.hosts().size()==0);}
+    function launch() {Trace.mark("launch");begin(Store.hosts().size()==0);}
     function begin(pair) {
-        exitTimer.stop();finish=false;rejecting=false;code=null;pairHost=null;
+        Trace.beginRun();timingSummary=null;exitTimer.stop();finish=false;rejecting=false;code=null;pairHost=null;
         if(session!=null) {session.close();}session=null;
         status=pair?"Scanning for pairing PC…":"Scanning for PC…";WatchUi.requestUpdate();ble.start(pair);
     }
@@ -61,7 +63,7 @@ class OmamoriApp extends Application.AppBase {
         } else if(visible().size()==0) {status=session.waiting?"Refreshing…":"Waiting for PC…";}
         WatchUi.requestUpdate();
     }
-    function success() {finish=true;try {Attention.vibrate([new Attention.VibeProfile(40,150)]);}catch(e) {} }
+    function success() {Trace.mark("success");timingSummary=Trace.summary();finish=true;try {Attention.vibrate([new Attention.VibeProfile(40,150)]);}catch(e) {} }
     function pairCode(value,name) {code=value;pairHost=name;status="Compare pairing code";WatchUi.requestUpdate();}
     function confirm(yes) {
         if(code==null || session==null) {return;}code=null;status=yes?"Waiting for PC confirmation…":"Pairing rejected";
@@ -74,12 +76,14 @@ class OmamoriApp extends Application.AppBase {
     }
     function exitWhenDrained() {if(ble.drained()) {exitTimer.stop();ble.stop();exitTimer.start(method(:exit),1500,false);}}
     function fail(message) {
+        Trace.mark("fail "+message);timingSummary=null;
         exitTimer.stop();if(session!=null) {session.close();}if(ble!=null) {ble.stop();}
         code=null;status=message;WatchUi.requestUpdate();exitTimer.start(method(:exit),2500,false);
     }
     function exitIfDone() {if(!menuOpen && session!=null && !session.waiting && session.inflight.size()==0 && session.entries.size()==0 && !session.more) {exit();}}
-    function exit() {if(menuOpen) {return;}if(ble!=null) {ble.stop();}System.exit();}
-    function onStop(state) {launchTimer.stop();exitTimer.stop();if(session!=null) {session.close();}if(ble!=null) {ble.stop();}}
+    function exit() {if(menuOpen) {return;}if(ble!=null) {ble.stop();}markExit();System.exit();}
+    function markExit() {if(!exitMarked) {Trace.mark("exit");exitMarked=true;}}
+    function onStop(state) {markExit();launchTimer.stop();exitTimer.stop();if(session!=null) {session.close();}if(ble!=null) {ble.stop();}}
     function showMenu(title as String,items as Array<MenuRow>,action as String) {
         menuOpen=true;exitTimer.stop();var m=new WatchUi.Menu2({:title=>title});
         for(var i=0;i<items.size();i++) {var it=items[i];m.addItem(new WatchUi.MenuItem(it[:label],it[:sub],it[:id],null));}

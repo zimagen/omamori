@@ -9,7 +9,7 @@ class Session {
     function start() {
         if(pairing) {
             ephemeral=Crypto.keyPair();commitMessage=Proto.pairCommit(Proto.commit(Crypto.publicKey(ephemeral),nonce));owner.send(commitMessage);
-        } else {key=host[:key];waiting=true;owner.send(Proto.auth(nonce));}
+        } else {key=host[:key];waiting=true;owner.send(Proto.auth(nonce));Trace.mark("hello-sent");}
     }
     function close() {closed=true;key=null;host=null;ephemeral=null;th=null;commitMessage=null;entries=[];inflight=[];}
     function contains(ids as Toybox.Lang.Array<Toybox.Lang.ByteArray>,id as Toybox.Lang.ByteArray) as Boolean {for(var i=0;i<ids.size();i++) {if(Crypto.equal(ids[i],id)) {return true;}}return false;}
@@ -21,6 +21,7 @@ class Session {
         if(t==0xff) {owner.fail(m[:code]==2?"Bad MAC":"PC rejected session");return;}
         if(pairing) {receivePair(m,bytes);return;}
         if(t==0x81 && waiting) {
+            Trace.mark("pending-received");
             if(!Crypto.equal(m[:host],host[:host_id]) || !Crypto.equal(m[:mac],Proto.pendingMac(key,nonce,bytes.slice(0,bytes.size()-32)))) {owner.fail("Bad MAC");return;}
             var ids=[];var next=[];
             for(var i=0;i<m[:entries].size();i++) {var e=m[:entries][i];Proto.require(!contains(ids,e[:id]));ids.add(e[:id]);if(!contains(sent,e[:id])) {next.add(e);}}
@@ -30,6 +31,7 @@ class Session {
             if(oldest!=null) {approve(oldest);}
             owner.changed();
         } else if(t==0x82) {
+            Trace.mark("result-received");
             var found=null as Flight or Null;var rest=[];
             for(var k=0;k<inflight.size();k++) {var f=inflight[k];if(Crypto.equal(f[:id],m[:id])) {found=f;}else {rest.add(f);}}
             Proto.require(found!=null);
@@ -50,12 +52,12 @@ class Session {
         for(var i=0;i<entries.size();i++) {if(Crypto.equal(entries[i][:id],e[:id])) {found=true;}else {rest.add(entries[i]);}}
         Proto.require(found);
         var msg=Proto.approve(e[:id],Proto.approveMac(key,host[:host_id],nonce,e));
-        entries=rest;sent.add(e[:id]);inflight.add({:id=>e[:id],:nonce=>nonce});owner.send(msg);
+        entries=rest;sent.add(e[:id]);inflight.add({:id=>e[:id],:nonce=>nonce});owner.send(msg);Trace.mark("approve-sent");
     }
     function tap(id as Toybox.Lang.ByteArray) {Proto.require(!closed && !pairing);for(var i=0;i<entries.size();i++) {var e=entries[i];if(e[:flags]==1 && Crypto.equal(e[:id],id)) {approve(e);owner.changed();return;}}Proto.require(false);}
     function refresh() {
         Proto.require(!closed && !pairing && !waiting && inflight.size()==0);
-        var next=Crypto.random(16);Proto.require(!Crypto.equal(next,nonce));nonce=next;entries=[];waiting=true;owner.send(Proto.auth(nonce));owner.changed();
+        var next=Crypto.random(16);Proto.require(!Crypto.equal(next,nonce));nonce=next;entries=[];waiting=true;owner.send(Proto.auth(nonce));Trace.mark("hello-sent");owner.changed();
     }
     function receivePair(m as WireMessage,bytes as Toybox.Lang.ByteArray) {
         if(m[:type]==0x90 && th==null && ephemeral!=null) {

@@ -6,3 +6,4 @@ developer_key*
 packaging/*.pkg.tar.*
 packaging/src/
 packaging/pkg/
+watch/logs/

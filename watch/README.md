@@ -72,6 +72,50 @@ only in `Application.Storage`, with string dictionary keys. No app settings,
 Properties, background activity, phone communications, or secret logging are
 used. Scanning times out after 15 seconds; connections/sessions after 60.
 
+## Device timing log
+
+For a sideloaded build, create an **empty file** on the watch before launching:
+
+- `GARMIN/Apps/LOGS/OMAMORI-VENU445MM.TXT` for `omamori-venu445mm.prg`.
+- `GARMIN/Apps/LOGS/OMAMORI-VENU441MM.TXT` for `omamori-venu441mm.prg`.
+
+The log basename must match the installed `.prg` basename (adjust it if you
+rename the program). Connect IQ writes `System.println` output to that file
+when it exists. Read it back over USB after a run. Lines have the form
+`omamori t=1234 d=56 connected`: `t` is milliseconds since app initialization;
+`d` is milliseconds since the previous mark. Time spent holding the shortcut
+or loading the app before initialization is outside this clock.
+
+| Marks | Meaning |
+| --- | --- |
+| `app-init`, `app-start`, `launch` | App initialization, onStart, launch timer firing. |
+| `profile-registered`, `scan-start` | BLE profile ready; scan requested. |
+| `scan-first-result`, `candidate` | First result with our service data, once per scan run; newly matched host (or pairing candidate). |
+| `connect-start`, `connected` | Immediately before pairDevice; connected callback. |
+| `services-ready`, `cccd-written` | RX, TX and CCCD found; notification subscription write acknowledged. |
+| `hello-sent`, `approve-sent` | AuthHello or Approve handed to the BLE send queue, including refreshes. |
+| `tx-acked q=<remaining>` | Each successful TX chunk write acknowledgement and remaining queued chunks. |
+| `rx-chunk n=<bytes>` | Each received notification's length, including its framing byte. |
+| `pending-received`, `result-received` | Full Pending or Result decoded after reassembly, before authentication checks. |
+| `success`, `exit`, `fail <message>` | Successful approval/pairing, app exit, or fixed user-facing failure text. |
+
+Only timings, fixed labels, counts and fixed failure messages are logged;
+keys, MACs, nonces, SAS codes, host/request IDs, commands and tty are excluded.
+The latest run's mark times stay in memory. After successful authentication,
+a single line under the status shows `scan`, `conn`, and `auth` in seconds:
+`connect-start - scan-start`, `cccd-written - connect-start`, and
+`result-received - cccd-written`. The existing 1.5-second exit timer is unchanged.
+Pairing has no Pending/Result exchange, so it has no authentication summary.
+
+Daemon INFO messages complement the watch clock: `request queued` (kind only),
+`advertising started`, `central connected`, `AuthHello received`, `Pending sent`
+(entry count), `Approve received`, `approval delivered to IPC client`, and
+`advertising stopped`. They carry `since_queued_ms` and `since_connect_ms` when
+applicable. Approval lines use that request's queue time; shared BLE events use
+the oldest queued request (retained through removal of the last request until
+advertising stops). No request contents or secrets are added at INFO. Delivery
+means successfully enqueued to the IPC connection's reply channel.
+
 ## Simulator unit tests (run on a host with a display)
 
 Build both test binaries:
