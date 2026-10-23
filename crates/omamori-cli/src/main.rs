@@ -96,10 +96,19 @@ fn patch(original: &str, undo: bool) -> String {
     if original.lines().any(marked) {
         return original.into();
     }
+    // Insert after the last pam_howdy.so auth line (face recognition is quick
+    // and should run first), otherwise before the first auth line.
+    let is_auth = |line: &str| matches!(line.split_whitespace().next(), Some("auth" | "-auth"));
+    let lines: Vec<&str> = original.split_inclusive('\n').collect();
+    let at = lines
+        .iter()
+        .rposition(|l| is_auth(l) && l.split_whitespace().any(|w| w.ends_with("pam_howdy.so")))
+        .map(|i| i + 1)
+        .or_else(|| lines.iter().position(|l| is_auth(l)));
     let mut result = String::new();
     let mut inserted = false;
-    for line in original.split_inclusive('\n') {
-        if !inserted && matches!(line.split_whitespace().next(), Some("auth" | "-auth")) {
+    for (i, line) in lines.iter().enumerate() {
+        if Some(i) == at {
             result.push_str(MARKED);
             inserted = true;
         }
@@ -112,6 +121,33 @@ fn patch(original: &str, undo: bool) -> String {
         result.push_str(MARKED);
     }
     result
+}
+/// Line diff for single-line inserts/removals: prints only changed lines with
+/// their line numbers (old for '-', new for '+').
+fn diff_lines(original: &str, updated: &str) -> Vec<String> {
+    let old: Vec<&str> = original.lines().collect();
+    let new: Vec<&str> = updated.lines().collect();
+    let mut out = Vec::new();
+    let (mut i, mut j) = (0, 0);
+    while i < old.len() || j < new.len() {
+        if i < old.len() && j < new.len() && old[i] == new[j] {
+            i += 1;
+            j += 1;
+        } else if j < new.len() && (i >= old.len() || !old[i..].contains(&new[j])) {
+            out.push(format!("+{:>3}: {}", j + 1, new[j]));
+            j += 1;
+        } else {
+            out.push(format!("-{:>3}: {}", i + 1, old[i]));
+            i += 1;
+        }
+    }
+    out
+}
+fn print_diff(path: &Path, original: &str, updated: &str) {
+    println!("--- {}\n+++ {}", path.display(), path.display());
+    for line in diff_lines(original, updated) {
+        println!("{line}");
+    }
 }
 fn setup(explicit: Option<&Path>, undo: bool, yes: bool, skip_module_check: bool) -> Result<()> {
     let path = explicit.unwrap_or(Path::new("/etc/pam.d/sudo"));
@@ -135,23 +171,7 @@ fn setup(explicit: Option<&Path>, undo: bool, yes: bool, skip_module_check: bool
         println!("No changes needed.");
         return Ok(());
     }
-    println!(
-        "--- {}\n+++ {}\n@@ -{},{} +{},{} @@",
-        path.display(),
-        path.display(),
-        usize::from(!original.is_empty()),
-        original.lines().count(),
-        usize::from(!updated.is_empty()),
-        updated.lines().count()
-    );
-    for (prefix, text) in [('-', original.as_str()), ('+', updated.as_str())] {
-        for line in text.split_inclusive('\n') {
-            print!("{prefix}{line}");
-            if !line.ends_with('\n') {
-                println!("\n\\ No newline at end of file");
-            }
-        }
-    }
+    print_diff(path, &original, &updated);
     io::stdout().flush()?;
     if !yes && !confirm("Apply this change? [y/N] ")? {
         return Ok(());
@@ -201,6 +221,29 @@ fn preserve(file: &fs::File, metadata: &fs::Metadata) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    const HOWDY_SUDO: &str = "auth      sufficient pam_howdy.so\nauth      [success=1 default=ignore] pam_exec.so quiet /usr/bin/omarchy-hw-laptop-closed\nauth      sufficient pam_fprintd.so\n#%PAM-1.0\nauth           include         system-auth\naccount                include         system-auth\n";
+    #[test]
+    fn inserted_after_howdy_before_fprintd() {
+        let out = patch(HOWDY_SUDO, false);
+        let lines: Vec<&str> = out.lines().collect();
+        assert!(lines[0].contains("pam_howdy.so"));
+        assert_eq!(lines[1], MARKED.trim_end());
+        assert!(lines[2].contains("pam_exec.so"));
+        assert_eq!(patch(&out, false), out, "idempotent");
+        assert_eq!(patch(&out, true), HOWDY_SUDO, "undo restores");
+    }
+    #[test]
+    fn diff_shows_only_the_inserted_line() {
+        let out = patch(HOWDY_SUDO, false);
+        assert_eq!(
+            diff_lines(HOWDY_SUDO, &out),
+            vec![format!("+  2: {}", MARKED.trim_end())]
+        );
+        assert_eq!(
+            diff_lines(&out, HOWDY_SUDO),
+            vec![format!("-  2: {}", MARKED.trim_end())]
+        );
+    }
     #[test]
     fn arch_default_and_idempotence() {
         let original = "#%PAM-1.0\n\nauth\t\tinclude\t\tsystem-auth\naccount\t\tinclude\t\tsystem-auth\nsession\t\tinclude\t\tsystem-auth\n";

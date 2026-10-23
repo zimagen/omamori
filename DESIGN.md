@@ -201,7 +201,7 @@ Public keys are SEC1 uncompressed (65 bytes, 0x04 || X || Y).
 
 ## PAM module
 
-Line added by `omamori setup-pam` at the top of the auth section of
+Line added by `omamori setup-pam` (after pam_howdy.so if present, else at the top of the auth section) of
 `/etc/pam.d/sudo`:
 
 ```
@@ -262,8 +262,9 @@ attempt by killing the PAM child; the daemon sees the disconnect.
 - `sudo omamori pair` — shows the code, asks y/N.
 - `sudo omamori unpair`
 - `sudo omamori setup-pam [--undo] [--yes] [--file /etc/pam.d/sudo]` —
-  backup to `<file>.omamori-bak.<timestamp>`, insert the marked line before
-  the first `auth` line, idempotent; `--undo` removes only lines carrying the
+  backup to `<file>.omamori-bak.<timestamp>`, insert the marked line right
+  after the last `pam_howdy.so` auth line if present (face recognition runs
+  first), otherwise before the first `auth` line; idempotent; `--undo` removes only lines carrying the
   `# omamori` marker. Shows the diff and asks before writing.
 
 ## Testing without hardware
