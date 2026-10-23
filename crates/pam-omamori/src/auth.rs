@@ -1,6 +1,6 @@
 //! Safe authentication policy and the terminal/socket input loop.
 use crate::ffi::{self, Terminal};
-use crate::ffi::{ABORT, IGNORE, UNAVAILABLE};
+use crate::ffi::{ABORT, CRED_INSUFFICIENT, IGNORE, UNAVAILABLE};
 use omamori_ipc::{Event, Input, RequestKind};
 use std::{
     io::{self, Read, Write},
@@ -159,7 +159,11 @@ pub(crate) fn authenticate(handle: ffi::Handle, o: &Options) -> io::Result<i32> 
                 password.push(0);
                 let result = handle.set_token(&password);
                 writeln!(terminal.file)?;
-                return Ok(if result == 0 { IGNORE } else { o.failure() });
+                return Ok(if result == 0 {
+                    CRED_INSUFFICIENT
+                } else {
+                    o.failure()
+                });
             } else if cc[libc::VINTR] != 0 && b == cc[libc::VINTR] {
                 writeln!(terminal.file)?;
                 drop(password);

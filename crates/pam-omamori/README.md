@@ -8,8 +8,9 @@ Optional arguments are `socket=PATH`, `tty=PATH`, `timeout=SECONDS`
 Unknown arguments are ignored.
 
 Sudo mode races watch approval against terminal password entry, returning
-PAM_IGNORE on fallback. Enter copies the password into PAM_AUTHTOK; the
-following password module needs `try_first_pass` to consume it. If that
+PAM_IGNORE on fallback. Enter copies the password into PAM_AUTHTOK and
+returns PAM_CRED_INSUFFICIENT on success, letting the setup-pam control skip
+fingerprint modules. The following password module needs `try_first_pass` to consume it. If that
 module does not consume the token, it can prompt again normally. Input is
 bounded to 4096 bytes; overflow falls back without passing a truncated token.
 Lock mode uses only IPC and returns PAM_AUTHINFO_UNAVAIL on failure.

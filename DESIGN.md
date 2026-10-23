@@ -228,8 +228,17 @@ Line added by `omamori setup-pam` (after pam_howdy.so if present, else at the to
 `/etc/pam.d/sudo`:
 
 ```
--auth sufficient pam_omamori.so mode=sudo   # omamori
+-auth [success=done new_authtok_reqd=done cred_insufficient=N default=ignore] pam_omamori.so mode=sudo   # omamori
 ```
+
+`N` counts auth entries after omamori up to (excluding) the first auth
+`include`/`substack` or `pam_unix.so` entry. A typed password skips those
+entries (for example, pam_exec and pam_fprintd give `N=2`) and proceeds to
+the password stack. Comments, blank lines, and non-auth entries do not count.
+If `N=0` or no destination exists, setup writes `sufficient` instead;
+that control ignores PAM_CRED_INSUFFICIENT and continues normally. Setup
+removes all existing marked lines before recomputing position and control,
+so it upgrades old configurations and remains idempotent.
 
 Lock screen service `/etc/pam.d/omarchy-lock-watch`:
 
@@ -263,8 +272,10 @@ not cross the FFI boundary. Passwords are zeroised after use.
    the socket:
    - `approved` → restore the tty, print `approved by watch`, PAM_SUCCESS.
    - Enter → set PAM_AUTHTOK to the typed password, close the socket
-     (cancels the request), PAM_IGNORE (pam_unix with try_first_pass checks
-     it; on a wrong password sudo prompts normally).
+     (cancels the request), PAM_CRED_INSUFFICIENT when setting the token
+     succeeds, otherwise PAM_IGNORE. The configured jump takes the token
+     straight to pam_unix with try_first_pass; on a wrong password sudo
+     prompts normally.
    - VERASE / VKILL / VWERASE handled; VINTR (^C) → restore, newline,
      `raise(SIGINT)`, then PAM_ABORT if still alive; VEOF on an empty line
      → PAM_ABORT.

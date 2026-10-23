@@ -202,7 +202,7 @@ impl Harness {
         let dir = self.temp.path().join(format!("pam-{service}"));
         fs::create_dir_all(&dir).unwrap();
         // PAM clears AUTHTOK when returning to an application. A tiny test-only
-        // module captures it inside the stack, before pam_deny runs.
+        // module captures it inside the stack, after the fingerprint stand-in.
         let capture = self.temp.path().join("capture.so");
         if !capture.exists() {
             let source = self.temp.path().join("capture.c");
@@ -235,7 +235,7 @@ int pam_sm_setcred(pam_handle_t *p,int f,int n,const char **v){return PAM_IGNORE
         }
         let content = if mode == "sudo" {
             format!(
-                "auth sufficient {} mode=sudo socket={} tty={}\nauth optional {}\nauth required pam_deny.so\n",
+                "auth [success=done new_authtok_reqd=done cred_insufficient=1 default=ignore] {} mode=sudo socket={} tty={}\nauth required pam_deny.so\nauth optional {}\nauth required pam_permit.so\n",
                 module().display(),
                 self.socket.display(),
                 pty.path,
@@ -348,7 +348,7 @@ async fn password_editing_and_disconnect_cancel() {
         let task = tokio::task::spawn_blocking(move || run_pam(&dir, "sudo"));
         pty.prompt();
         pty.master.write_all(typed).unwrap();
-        assert_eq!(result(task).await, (7, expected.into()));
+        assert_eq!(result(task).await, (0, expected.into()));
         pty.restored();
         h.pending(0).await;
         h.stop().await;
@@ -430,7 +430,7 @@ async fn daemon_loss_keeps_password_fallback() {
     pty.prompt();
     h.stop().await;
     pty.master.write_all(b"secret\n").unwrap();
-    assert_eq!(result(task).await, (7, "secret".into()));
+    assert_eq!(result(task).await, (0, "secret".into()));
     pty.restored();
 }
 

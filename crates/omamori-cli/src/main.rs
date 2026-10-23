@@ -115,44 +115,70 @@ fn connect_boost(path: &Path) -> io::Result<UnixStream> {
     socket.connect_timeout(&SockAddr::unix(path)?, timeout)?;
     socket.set_read_timeout(Some(timeout))?;
     socket.set_write_timeout(Some(timeout))?;
-    Ok(socket.into())
+    Ok(std::os::fd::OwnedFd::from(socket).into())
 }
 const MARKED: &str = "-auth sufficient pam_omamori.so mode=sudo   # omamori\n";
+fn is_auth(line: &str) -> bool {
+    matches!(line.split_whitespace().next(), Some("auth" | "-auth"))
+}
+// Return the control and module (or included service) for auth entries only.
+fn auth_entry(line: &str) -> Option<(&str, &str)> {
+    let mut words = line.split('#').next()?.split_whitespace();
+    if !is_auth(line) {
+        return None;
+    }
+    words.next()?;
+    let control = words.next()?;
+    if control.starts_with('[') && !control.ends_with(']') {
+        words.find(|word| word.ends_with(']'))?;
+    }
+    Some((control, words.next()?))
+}
+fn password_skip(lines: &[&str]) -> usize {
+    for (count, line) in lines.iter().filter(|line| is_auth(line)).enumerate() {
+        if auth_entry(line).is_some_and(|(control, module)| {
+            matches!(control, "include" | "substack")
+                || module.rsplit('/').next() == Some("pam_unix.so")
+        }) {
+            return count;
+        }
+    }
+    0
+}
 fn patch(original: &str, undo: bool) -> String {
     let marked = |line: &str| line.trim_end().ends_with("# omamori");
+    let lines: Vec<&str> = original
+        .split_inclusive('\n')
+        .filter(|line| !marked(line))
+        .collect();
     if undo {
-        return original
-            .split_inclusive('\n')
-            .filter(|line| !marked(line))
-            .collect();
-    }
-    if original.lines().any(marked) {
-        return original.into();
+        return lines.concat();
     }
     // Insert after the last pam_howdy.so auth line (face recognition is quick
     // and should run first), otherwise before the first auth line.
-    let is_auth = |line: &str| matches!(line.split_whitespace().next(), Some("auth" | "-auth"));
-    let lines: Vec<&str> = original.split_inclusive('\n').collect();
     let at = lines
         .iter()
-        .rposition(|l| is_auth(l) && l.split_whitespace().any(|w| w.ends_with("pam_howdy.so")))
+        .rposition(|line| {
+            auth_entry(line)
+                .is_some_and(|(_, module)| module.rsplit('/').next() == Some("pam_howdy.so"))
+        })
         .map(|i| i + 1)
-        .or_else(|| lines.iter().position(|l| is_auth(l)));
-    let mut result = String::new();
-    let mut inserted = false;
-    for (i, line) in lines.iter().enumerate() {
-        if Some(i) == at {
-            result.push_str(MARKED);
-            inserted = true;
-        }
-        result.push_str(line);
+        .or_else(|| lines.iter().position(|line| is_auth(line)))
+        .unwrap_or(lines.len());
+    let skip = password_skip(&lines[at..]);
+    let entry = if skip == 0 {
+        MARKED.to_owned()
+    } else {
+        format!(
+            "-auth [success=done new_authtok_reqd=done cred_insufficient={skip} default=ignore] pam_omamori.so mode=sudo   # omamori\n"
+        )
+    };
+    let mut result = lines[..at].concat();
+    if !result.is_empty() && !result.ends_with('\n') {
+        result.push('\n');
     }
-    if !inserted {
-        if !result.is_empty() && !result.ends_with('\n') {
-            result.push('\n');
-        }
-        result.push_str(MARKED);
-    }
+    result.push_str(&entry);
+    result.extend(lines[at..].iter().copied());
     result
 }
 /// Line diff for single-line inserts/removals: prints only changed lines with
@@ -255,12 +281,17 @@ fn preserve(file: &fs::File, metadata: &fs::Metadata) -> Result<()> {
 mod tests {
     use super::*;
     const HOWDY_SUDO: &str = "auth      sufficient pam_howdy.so\nauth      [success=1 default=ignore] pam_exec.so quiet /usr/bin/omarchy-hw-laptop-closed\nauth      sufficient pam_fprintd.so\n#%PAM-1.0\nauth           include         system-auth\naccount                include         system-auth\n";
+    const SKIP_TWO: &str = "-auth [success=done new_authtok_reqd=done cred_insufficient=2 default=ignore] pam_omamori.so mode=sudo   # omamori\n";
     #[test]
     fn inserted_after_howdy_before_fprintd() {
         let out = patch(HOWDY_SUDO, false);
         let lines: Vec<&str> = out.lines().collect();
         assert!(lines[0].contains("pam_howdy.so"));
-        assert_eq!(lines[1], MARKED.trim_end());
+        assert_eq!(
+            password_skip(&HOWDY_SUDO.lines().skip(1).collect::<Vec<_>>()),
+            2
+        );
+        assert_eq!(lines[1], SKIP_TWO.trim_end());
         assert!(lines[2].contains("pam_exec.so"));
         assert_eq!(patch(&out, false), out, "idempotent");
         assert_eq!(patch(&out, true), HOWDY_SUDO, "undo restores");
@@ -270,11 +301,11 @@ mod tests {
         let out = patch(HOWDY_SUDO, false);
         assert_eq!(
             diff_lines(HOWDY_SUDO, &out),
-            vec![format!("+  2: {}", MARKED.trim_end())]
+            vec![format!("+  2: {}", SKIP_TWO.trim_end())]
         );
         assert_eq!(
             diff_lines(&out, HOWDY_SUDO),
-            vec![format!("-  2: {}", MARKED.trim_end())]
+            vec![format!("-  2: {}", SKIP_TWO.trim_end())]
         );
     }
     #[test]
@@ -291,6 +322,36 @@ mod tests {
             patch("# auth\n-auth required x\n", false),
             format!("# auth\n{MARKED}-auth required x\n")
         );
+    }
+    #[test]
+    fn upgrade_repositions_and_removes_all_old_markers() {
+        let old = format!("{MARKED}{HOWDY_SUDO}{MARKED}");
+        let updated = patch(&old, false);
+        assert_eq!(updated, patch(HOWDY_SUDO, false));
+        let diff = diff_lines(&old, &updated);
+        assert_eq!(diff.len(), 3);
+        assert!(diff.contains(&format!("-  1: {}", MARKED.trim_end())));
+        assert!(diff.contains(&format!("+  2: {}", SKIP_TWO.trim_end())));
+        assert!(diff.contains(&format!("-  8: {}", MARKED.trim_end())));
+        assert_eq!(patch(&updated, false), updated);
+        assert_eq!(patch(&updated, true), HOWDY_SUDO);
+    }
+    #[test]
+    fn skip_counts_only_auth_and_requires_password_destination() {
+        for destination in [
+            "auth include system-auth",
+            "-auth substack system-auth",
+            "auth [success=1 default=ignore] /usr/lib/security/pam_unix.so try_first_pass",
+        ] {
+            let original = format!(
+                "# auth sufficient pam_unix.so\n-auth sufficient pam_fprintd.so\n\naccount include system-auth\n{destination}\n"
+            );
+            assert_eq!(password_skip(&original.lines().collect::<Vec<_>>()), 1);
+            assert!(patch(&original, false).contains("cred_insufficient=1"));
+        }
+        let original = "auth sufficient pam_fprintd.so\n";
+        assert_eq!(password_skip(&original.lines().collect::<Vec<_>>()), 0);
+        assert_eq!(patch(original, false), format!("{MARKED}{original}"));
     }
     #[test]
     fn undo_only_marker_at_end() {

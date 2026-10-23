@@ -10,6 +10,7 @@ use std::{
     panic::{AssertUnwindSafe, catch_unwind},
 };
 pub(crate) const IGNORE: c_int = 25;
+pub(crate) const CRED_INSUFFICIENT: c_int = 8;
 pub(crate) const UNAVAILABLE: c_int = 9;
 pub(crate) const ABORT: c_int = 26;
 #[link(name = "pam")]
