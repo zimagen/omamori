@@ -1,12 +1,13 @@
-From b4d6dff46d2906f52353c2c535c9c371d3fef2ca Mon Sep 17 00:00:00 2001
+From b5b61d23e0dba86d748f7c4df0b63375928f3388 Mon Sep 17 00:00:00 2001
 From: zimagen <zimagen@users.noreply.github.com>
 Date: Fri, 23 Oct 2026 02:11:35 +0000
 Subject: [PATCH] Local: omamori watch unlock on lock screen
 
 ---
- bin/omarchy-apply-lock         | 13 +++++++
- shell/plugins/lock/Service.qml | 64 ++++++++++++++++++++++++++++++++++
- 2 files changed, 77 insertions(+)
+ bin/omarchy-apply-lock          | 13 +++++++
+ shell/plugins/lock/Service.qml  | 64 +++++++++++++++++++++++++++++++++
+ test/shell.d/apply-lock-test.sh | 11 +++++-
+ 3 files changed, 87 insertions(+), 1 deletion(-)
 
 diff --git a/bin/omarchy-apply-lock b/bin/omarchy-apply-lock
 index e7fcc1fa..90a715f7 100755
@@ -156,6 +157,56 @@ index 17debdf3..7060b072 100644
          authenticating: root.authenticating,
          lastEvent: root.lastEvent,
          lastEventAt: root.lastEventAt
+diff --git a/test/shell.d/apply-lock-test.sh b/test/shell.d/apply-lock-test.sh
+index bbc54a5b..9ed9828c 100644
+--- a/test/shell.d/apply-lock-test.sh
++++ b/test/shell.d/apply-lock-test.sh
+@@ -59,6 +59,7 @@ trusted_fprintd="$test_tmp/trusted-fprintd-list"
+ password_pam="$test_tmp/omarchy-lock-password"
+ fingerprint_pam="$test_tmp/omarchy-lock-fingerprint"
+ face_pam="$test_tmp/omarchy-lock-face"
++watch_pam="$test_tmp/omarchy-lock-watch"
+ attack_marker="$test_tmp/user-fprintd-list-ran"
+ trusted_uid="$test_tmp/trusted-fprintd-list.uid"
+ trusted_args="$test_tmp/trusted-fprintd-list.args"
+@@ -112,6 +113,7 @@ prepare_helper() {
+     -v password_pam="$password_pam" \
+     -v fingerprint_pam="$fingerprint_pam" \
+     -v face_pam="$face_pam" \
++    -v watch_pam="$watch_pam" \
+     -v trusted_root_bin="$trusted_root_bin" \
+     -v trusted_fprintd="$trusted_fprintd" \
+     -v keep_root_path="$keep_root_path" \
+@@ -125,6 +127,7 @@ prepare_helper() {
+       gsub("/etc/pam\\.d/omarchy-lock-password", "\"" password_pam "\"", line)
+       gsub("/etc/pam\\.d/omarchy-lock-fingerprint", "\"" fingerprint_pam "\"", line)
+       gsub("/etc/pam\\.d/omarchy-lock-face", "\"" face_pam "\"", line)
++      gsub("/etc/pam\\.d/omarchy-lock-watch", "\"" watch_pam "\"", line)
+ 
+       if (line == "if (( EUID == 0 )); then" && keep_root_path == 0) {
+         print "if (( 0 )); then"
+@@ -198,7 +201,7 @@ for helper in "$patched_helper" "$absolute_only_helper" "$root_path_only_helper"
+ done
+ 
+ reset_runtime_files() {
+-  rm -f "$password_pam" "$fingerprint_pam" "$face_pam" "$trusted_uid" "$trusted_args" "$attack_marker" "$attack_args"
++  rm -f "$password_pam" "$fingerprint_pam" "$face_pam" "$watch_pam" "$trusted_uid" "$trusted_args" "$attack_marker" "$attack_args"
+ }
+ 
+ run_as_root() {
+@@ -223,6 +226,12 @@ if [[ -f /usr/lib/security/pam_howdy.so ]]; then
+ else
+   [[ ! -e $face_pam ]] || fail "no face stack is written without the howdy module"
+ fi
++if [[ -f /usr/lib/security/pam_omamori.so ]]; then
++  grep -q 'pam_omamori.so mode=lock' "$watch_pam" || fail "an installed omamori module gets a watch stack of its own"
++  ! grep -q 'pam_omamori.so' "$password_pam" || fail "the password stack never carries the watch module"
++else
++  [[ ! -e $watch_pam ]] || fail "no watch stack is written without the omamori module"
++fi
+ [[ -x $test_tmp/system-sleep/fprintd-resume ]] ||
+   fail "the lock helper installs the resume hook beside the fingerprint PAM file"
+ [[ -f $test_tmp/fprintd.service.d/10-stop-timeout.conf ]] ||
 -- 
 2.47.3
 
