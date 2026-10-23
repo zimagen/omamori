@@ -88,13 +88,14 @@ or loading the app before initialization is outside this clock.
 
 | Marks | Meaning |
 | --- | --- |
-| `app-init`, `app-start`, `launch` | App initialization, onStart, launch timer firing. |
+| `app-init`, `app-start`, `launch` | App initialization, onStart, first main-view onShow (before its first frame). |
 | `profile-registered`, `scan-start` | BLE profile ready; scan requested. |
 | `scan-first-result`, `candidate` | First result with our service data, once per scan run; newly matched host (or pairing candidate). |
 | `connect-start`, `connected` | Immediately before pairDevice; connected callback. |
 | `services-ready`, `cccd-written` | RX, TX and CCCD found; notification subscription write acknowledged. |
 | `hello-sent`, `approve-sent` | AuthHello or Approve handed to the BLE send queue, including refreshes. |
 | `tx-acked q=<remaining>` | Each successful TX chunk write acknowledgement and remaining queued chunks. |
+| `write-fallback` | A no-response write failed or had no callback within 1.5 seconds; retry the current chunk with response and use that mode for the rest of this app run. |
 | `rx-chunk n=<bytes>` | Each received notification's length, including its framing byte. |
 | `pending-received`, `result-received` | Full Pending or Result decoded after reassembly, before authentication checks. |
 | `success`, `exit`, `fail <message>` | Successful approval/pairing, app exit, or fixed user-facing failure text. |
@@ -106,6 +107,12 @@ a single line under the status shows `scan`, `conn`, and `auth` in seconds:
 `connect-start - scan-start`, `cccd-written - connect-start`, and
 `result-received - cccd-written`. The existing 1.5-second exit timer is unchanged.
 Pairing has no Pending/Result exchange, so it has no authentication summary.
+
+TX uses write without response with one chunk outstanding at a time, advancing
+only when the controller reports acceptance through `onCharacteristicWrite`.
+CCCD descriptor writes still use a response. A failed no-response write
+(including a request exception) or a missing callback triggers `write-fallback`;
+stopping or restarting a session does not reset the fallback.
 
 Daemon INFO messages complement the watch clock: `request queued` (kind only),
 `advertising started`, `central connected`, `AuthHello received`, `Pending sent`

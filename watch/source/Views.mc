@@ -7,6 +7,7 @@ import Toybox.WatchUi;
 class OmamoriView extends WatchUi.View {
     var owner;var width=0;var page=0;var pages=1;var current=0;var shownId=null;var shownHash;var shownNonce;var shownCode;var shownPairSession;var shownAt=0;
     function initialize(o) {View.initialize();owner=o;}
+    function onShow() {owner.launch();}
     function lines(dc as Graphics.Dc,s as String,maxWidth as Number) as Array<String> {
         var chars=s.toCharArray();var out=[];var line="";
         for(var i=0;i<chars.size();i++) {

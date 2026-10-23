@@ -6,13 +6,15 @@ class Ble extends BluetoothLowEnergy.BleDelegate {
     var owner;var service;var rxUuid;var txUuid;var device;var rx;var tx;var cccd;
     var firstResult=false;var registered=false;var active=false;var mode=false;var connecting=false;
     var candidates as Array<Candidate> = [];var hosts as Array<Host> = [];var queue as Array<ByteArray> = [];var busy=false;var ready=false;
-    var frames;var scanTimer;var collectTimer;var sessionTimer;
+    var frames;var scanTimer;var collectTimer;var sessionTimer;var writeTimer;
+    // Sticky across reconnects and refreshes for this app run.
+    var writeWithResponse=false;
     function initialize(o) {
         BleDelegate.initialize();owner=o;frames=new Reassembler();
         service=BluetoothLowEnergy.stringToUuid("4f6d616d-6f72-6900-0001-000000000000");
         rxUuid=BluetoothLowEnergy.stringToUuid("4f6d616d-6f72-6900-0001-000000000002");
         txUuid=BluetoothLowEnergy.stringToUuid("4f6d616d-6f72-6900-0001-000000000003");
-        scanTimer=new Timer.Timer();collectTimer=new Timer.Timer();sessionTimer=new Timer.Timer();
+        scanTimer=new Timer.Timer();collectTimer=new Timer.Timer();sessionTimer=new Timer.Timer();writeTimer=new Timer.Timer();
         BluetoothLowEnergy.setDelegate(self);
         BluetoothLowEnergy.registerProfile({:uuid=>service,:characteristics=>[{:uuid=>rxUuid},{:uuid=>txUuid,:descriptors=>[BluetoothLowEnergy.cccdUuid()]}]});
     }
@@ -79,12 +81,26 @@ class Ble extends BluetoothLowEnergy.BleDelegate {
     function pump() {
         if(!active || !ready || busy || queue.size()==0) {return;}
         busy=true;
-        try {rx.requestWrite(queue[0],{:writeType=>BluetoothLowEnergy.WRITE_TYPE_WITH_RESPONSE});}
-        catch(e) {owner.fail("Connection lost");}
+        try {
+            if(!writeWithResponse) {writeTimer.start(method(:writeExpired),1500,false);}
+            rx.requestWrite(queue[0],{:writeType=>writeWithResponse?BluetoothLowEnergy.WRITE_TYPE_WITH_RESPONSE:BluetoothLowEnergy.WRITE_TYPE_DEFAULT});
+        }
+        catch(e) {if(!writeWithResponse) {writeFallback();}else {owner.fail("Connection lost");}}
+    }
+    function writeExpired() {
+        if(active && ready && busy && !writeWithResponse) {writeFallback();}
+    }
+    function writeFallback() {
+        writeTimer.stop();writeWithResponse=true;Trace.mark("write-fallback");
+        // Keep the current chunk at the head until its retry succeeds.
+        busy=false;pump();
     }
     function onCharacteristicWrite(characteristic,status) {
         if(!active || !ready || !characteristic.getUuid().equals(rxUuid) || !busy) {return;}
-        if(status!=BluetoothLowEnergy.STATUS_SUCCESS) {owner.fail("Connection lost");return;}
+        writeTimer.stop();
+        if(status!=BluetoothLowEnergy.STATUS_SUCCESS) {
+            if(!writeWithResponse) {writeFallback();}else {owner.fail("Connection lost");}return;
+        }
         queue=queue.slice(1,queue.size());Trace.mark("tx-acked q="+queue.size());busy=false;pump();
     }
     function onCharacteristicChanged(characteristic,value) {
@@ -97,7 +113,7 @@ class Ble extends BluetoothLowEnergy.BleDelegate {
     function expired() {owner.fail("Session timed out");}
     function drained() {return queue.size()==0 && !busy;}
     function stop() {
-        active=false;scanTimer.stop();collectTimer.stop();sessionTimer.stop();
+        active=false;scanTimer.stop();collectTimer.stop();sessionTimer.stop();writeTimer.stop();
         BluetoothLowEnergy.setScanState(BluetoothLowEnergy.SCAN_STATE_OFF);
         if(device!=null) {BluetoothLowEnergy.unpairDevice(device);}device=null;rx=null;tx=null;cccd=null;
         queue=[];busy=false;ready=false;connecting=false;candidates=[];hosts=[];frames.reset();
