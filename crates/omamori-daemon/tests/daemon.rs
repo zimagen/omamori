@@ -586,3 +586,28 @@ async fn state_rejects_symlinks_and_second_daemon() {
     assert!(Store::open(&alias).is_err());
     assert!(Store::open(std::path::Path::new("/tmp")).is_err());
 }
+
+#[tokio::test(start_paused = true)]
+async fn boost_ipc_preserves_request_and_switches_interval() {
+    let mut h = Harness::new(true, true).await;
+    let mut boost = h.client().await;
+    boost.send(json!({"op":"boost"})).await;
+    assert_eq!(
+        boost.event().await,
+        json!({"ev":"denied","reason":"no-request"})
+    );
+    boost.eof().await;
+    let mut request = h.client().await;
+    request.send(sudo()).await;
+    assert_eq!(request.event().await["ev"], "queued");
+    assert_eq!(h.peer.intervals.recv().await.unwrap(), Some([20, 30]));
+    tokio::time::advance(Duration::from_secs(30)).await;
+    assert_eq!(h.peer.intervals.recv().await.unwrap(), Some([1000, 1200]));
+    let mut boost = h.client().await;
+    boost.send(json!({"op":"boost"})).await;
+    assert_eq!(boost.event().await, json!({"ev":"boosted"}));
+    boost.eof().await;
+    assert_eq!(h.peer.intervals.recv().await.unwrap(), Some([20, 30]));
+    h.pending_count(1).await;
+    h.stop().await;
+}

@@ -25,6 +25,7 @@ enum Command {
         json: bool,
     },
     Pair,
+    Boost,
     Unpair,
     SetupPam {
         #[arg(long)]
@@ -56,7 +57,12 @@ fn main() -> Result<()> {
         return setup(file.as_deref(), undo, yes, skip_module_check);
     }
     let json_status = matches!(args.command, Command::Status { json: true });
-    let mut socket = match UnixStream::connect(args.socket) {
+    let boost = matches!(args.command, Command::Boost);
+    let mut socket = match if boost {
+        connect_boost(&args.socket)
+    } else {
+        UnixStream::connect(&args.socket)
+    } {
         Ok(socket) => socket,
         Err(_) if json_status => {
             println!("{{\"daemon\":false}}");
@@ -67,6 +73,7 @@ fn main() -> Result<()> {
     let input = match args.command {
         Command::Status { .. } => Input::Status {},
         Command::Pair => Input::PairBegin {},
+        Command::Boost => Input::Boost {},
         Command::Unpair => Input::Unpair {},
         _ => unreachable!(),
     };
@@ -88,6 +95,7 @@ fn main() -> Result<()> {
                 let accept = confirm("Do the codes match? [y/N] ")?;
                 omamori_ipc::send(&mut socket, &Input::PairConfirm { accept })?;
             }
+            Event::Boosted if boost => return Ok(()),
             Event::PairDone => {
                 println!("Paired.");
                 return Ok(());
@@ -98,6 +106,16 @@ fn main() -> Result<()> {
             event => bail!("unexpected daemon event: {event:?}"),
         }
     }
+}
+// Bound connection setup as well as daemon response time for lock-screen hooks.
+fn connect_boost(path: &Path) -> io::Result<UnixStream> {
+    use socket2::{Domain, SockAddr, Socket, Type};
+    let timeout = std::time::Duration::from_millis(200);
+    let socket = Socket::new(Domain::UNIX, Type::STREAM, None)?;
+    socket.connect_timeout(&SockAddr::unix(path)?, timeout)?;
+    socket.set_read_timeout(Some(timeout))?;
+    socket.set_write_timeout(Some(timeout))?;
+    Ok(socket.into())
 }
 const MARKED: &str = "-auth sufficient pam_omamori.so mode=sudo   # omamori\n";
 fn patch(original: &str, undo: bool) -> String {

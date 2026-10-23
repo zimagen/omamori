@@ -15,7 +15,7 @@ pub enum Event {
 #[async_trait]
 pub trait Transport: Send {
     fn powered(&self) -> bool;
-    async fn advertise(&mut self, data: Option<[u8; 9]>) -> Result<()>;
+    async fn advertise(&mut self, data: Option<[u8; 9]>, interval_ms: [u16; 2]) -> Result<()>;
     async fn recv(&mut self) -> Option<Event>;
     async fn send(&mut self, chunk: Vec<u8>) -> Result<()>;
     async fn disconnect(&mut self) -> Result<()>;

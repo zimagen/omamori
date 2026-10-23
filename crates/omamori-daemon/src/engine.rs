@@ -52,6 +52,8 @@ pub(crate) struct Engine<T> {
     reassembler: Reassembler,
     connected: bool,
     advertising: Option<[u8; 9]>,
+    boost_until: Option<Instant>,
+    advertising_fast: bool,
     last_activity: Instant,
     connected_at: Option<Instant>,
     // Retain the queue origin through removal of the final approved request.
@@ -90,10 +92,16 @@ impl<T: Transport> Engine<T> {
             reassembler: Reassembler::new(20).expect("valid chunk size"),
             connected: false,
             advertising: None,
+            boost_until: None,
+            advertising_fast: false,
             last_activity: Instant::now(),
             connected_at: None,
             timing_queued_at: None,
         }
+    }
+    fn boost(&mut self) {
+        self.boost_until =
+            Some(Instant::now() + Duration::from_secs(self.config.adv_boost_secs.into()));
     }
     fn queued_at(&self) -> Option<Instant> {
         self.requests.values().map(|r| r.created).min()
@@ -145,6 +153,14 @@ impl<T: Transport> Engine<T> {
             } => {
                 let root = self.policy.is_root(uid);
                 match input {
+                    Input::Boost {} => {
+                        if self.requests.values().any(|r| root || r.uid == uid) {
+                            self.boost();
+                            emit(&reply, json!({"ev":"boosted"}));
+                        } else {
+                            denied(&reply, "no-request");
+                        }
+                    }
                     Input::Status {} => {
                         let pending: Vec<_> = self
                             .requests
@@ -242,6 +258,7 @@ impl<T: Transport> Engine<T> {
                             },
                         };
                         emit(&reply, json!({"ev":"queued","id":hex(&req_id)}));
+                        self.boost();
                         let created = Instant::now();
                         let since_connect_ms =
                             self.connected_at.map(|t| t.elapsed().as_millis() as u64);
@@ -271,6 +288,7 @@ impl<T: Transport> Engine<T> {
                             unavailable(&reply, "no-adapter");
                         } else {
                             self.reset().await;
+                            self.boost();
                             tracing::info!("pairing session started");
                             self.pairing = Some(PairOwner {
                                 conn: id,
@@ -473,6 +491,18 @@ impl<T: Transport> Engine<T> {
         }
     }
     async fn update_advertising(&mut self) {
+        // The existing registration is inactive while connected. Defer all
+        // changes until disconnect so interval transitions cannot disrupt it.
+        if self.connected {
+            return;
+        }
+        let fast =
+            self.pairing.is_some() || self.boost_until.is_some_and(|until| Instant::now() < until);
+        let interval_ms = if fast {
+            self.config.adv_interval_ms
+        } else {
+            self.config.adv_slow_interval_ms
+        };
         let wanted =
             if self.transport.powered() && (!self.requests.is_empty() || self.pairing.is_some()) {
                 let mut data = [0; 9];
@@ -482,10 +512,10 @@ impl<T: Transport> Engine<T> {
             } else {
                 None
             };
-        if wanted != self.advertising {
+        if wanted != self.advertising || (wanted.is_some() && fast != self.advertising_fast) {
             // BlueZ drops the previous registration before replacing it.
             self.log_advertising_stopped();
-            if let Err(e) = self.transport.advertise(wanted).await {
+            if let Err(e) = self.transport.advertise(wanted, interval_ms).await {
                 tracing::warn!(error = %e, "BLE advertisement registration failed");
                 if let Some(owner) = self.pairing.take() {
                     tracing::info!(
@@ -502,7 +532,14 @@ impl<T: Transport> Engine<T> {
                 return;
             }
             self.advertising = wanted;
+            self.advertising_fast = fast;
             if wanted.is_some() {
+                let [min_ms, max_ms] = interval_ms;
+                if fast {
+                    tracing::info!(min_ms, max_ms, "advertising interval fast");
+                } else {
+                    tracing::info!(min_ms, max_ms, "advertising interval slow");
+                }
                 self.timing_queued_at = self.queued_at();
                 self.log_session_timing("advertising started", None);
             }
@@ -540,7 +577,10 @@ impl<T: Transport> Engine<T> {
             }
             self.update_advertising().await;
         }
-        let _ = self.transport.advertise(None).await;
+        let _ = self
+            .transport
+            .advertise(None, self.config.adv_slow_interval_ms)
+            .await;
         self.log_advertising_stopped();
         self.fail_pair("shutdown");
         self.reset().await;
@@ -589,6 +629,108 @@ mod tests {
             .await
             .unwrap();
         events
+    }
+
+    fn lock_request() -> Input {
+        Input::Request {
+            kind: RequestKind::Lock,
+            user: "user1000".into(),
+            command: None,
+            tty: None,
+            pid: None,
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn request_boost_window_and_uid_authorization() {
+        let (_temp, mut engine, mut peer) = engine();
+        let _client = input(&mut engine, 1, 1000, lock_request()).await;
+        let (tx, rx) = mpsc::channel(16);
+        let task = tokio::spawn(engine.run(rx));
+        assert_eq!(peer.intervals.recv().await.unwrap(), Some([20, 30]));
+        tokio::time::advance(Duration::from_secs(30)).await;
+        assert_eq!(peer.intervals.recv().await.unwrap(), Some([1000, 1200]));
+        for (uid, expected) in [
+            (1001, json!({"ev":"denied","reason":"no-request"})),
+            (1000, json!({"ev":"boosted"})),
+        ] {
+            let (reply, mut events) = mpsc::channel(8);
+            tx.send(Command::Ipc {
+                id: 2,
+                uid,
+                name: format!("user{uid}"),
+                input: Input::Boost {},
+                reply,
+            })
+            .await
+            .unwrap();
+            assert_eq!(events.recv().await.unwrap(), expected);
+            if uid == 1001 {
+                assert!(peer.intervals.try_recv().is_err());
+            }
+        }
+        assert_eq!(peer.intervals.recv().await.unwrap(), Some([20, 30]));
+        // Extending an active window must not re-register the advertisement.
+        tokio::time::advance(Duration::from_secs(20)).await;
+        let (reply, mut events) = mpsc::channel(8);
+        tx.send(Command::Ipc {
+            id: 3,
+            uid: 0,
+            name: "root".into(),
+            input: Input::Boost {},
+            reply,
+        })
+        .await
+        .unwrap();
+        assert_eq!(events.recv().await.unwrap(), json!({"ev":"boosted"}));
+        tokio::time::advance(Duration::from_secs(10)).await;
+        tokio::task::yield_now().await;
+        assert!(peer.intervals.try_recv().is_err());
+        tokio::time::advance(Duration::from_secs(20)).await;
+        assert_eq!(peer.intervals.recv().await.unwrap(), Some([1000, 1200]));
+        drop(tx);
+        task.await.unwrap().unwrap();
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn pairing_stays_fast_past_boost_window() {
+        let (_temp, mut engine, mut peer) = engine();
+        let _client = input(&mut engine, 1, 0, Input::PairBegin {}).await;
+        let (tx, rx) = mpsc::channel(16);
+        let task = tokio::spawn(engine.run(rx));
+        assert_eq!(peer.intervals.recv().await.unwrap(), Some([20, 30]));
+        tokio::time::advance(Duration::from_secs(119)).await;
+        tokio::task::yield_now().await;
+        assert!(peer.intervals.try_recv().is_err());
+        assert_eq!(peer.advertising.borrow().unwrap()[8], 1);
+        drop(tx);
+        task.await.unwrap().unwrap();
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn connected_central_defers_interval_changes_until_disconnect() {
+        let (_temp, mut engine, mut peer) = engine();
+        let _client = input(&mut engine, 1, 1000, lock_request()).await;
+        engine.update_advertising().await;
+        assert_eq!(peer.intervals.try_recv().unwrap(), Some([20, 30]));
+        engine.transport_event(Event::Connected).await.unwrap();
+        tokio::time::advance(Duration::from_secs(30)).await;
+        engine.update_advertising().await;
+        assert!(peer.intervals.try_recv().is_err());
+        let mut boosted = input(&mut engine, 2, 1000, Input::Boost {}).await;
+        assert_eq!(boosted.recv().await.unwrap(), json!({"ev":"boosted"}));
+        engine.update_advertising().await;
+        assert!(peer.intervals.try_recv().is_err());
+        tokio::time::advance(Duration::from_secs(30)).await;
+        engine.transport_event(Event::Disconnected).await.unwrap();
+        engine.update_advertising().await;
+        assert_eq!(peer.intervals.try_recv().unwrap(), Some([1000, 1200]));
+        engine.command(Command::Disconnect(1)).await.unwrap();
+        let mut denied = input(&mut engine, 3, 0, Input::Boost {}).await;
+        assert_eq!(
+            denied.recv().await.unwrap(),
+            json!({"ev":"denied","reason":"no-request"})
+        );
     }
 
     #[tokio::test]

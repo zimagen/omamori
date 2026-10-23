@@ -40,26 +40,25 @@ fn advertisement(data: [u8; 9], interval_ms: Option<[u16; 2]>) -> Advertisement 
 
 // Kept outside Live so adapter reinitialization retains the fallback decision.
 struct Advertising {
-    interval_ms: [u16; 2],
     unsupported: bool,
-    logged: bool,
 }
 
 impl Advertising {
-    fn new(interval_ms: [u16; 2]) -> Self {
-        Self {
-            interval_ms,
-            unsupported: false,
-            logged: false,
-        }
+    fn new() -> Self {
+        Self { unsupported: false }
     }
 
-    async fn register<T, F, Fut>(&mut self, data: [u8; 9], mut register: F) -> Result<T>
+    async fn register<T, F, Fut>(
+        &mut self,
+        data: [u8; 9],
+        interval_ms: [u16; 2],
+        mut register: F,
+    ) -> Result<T>
     where
         F: FnMut(Advertisement) -> Fut,
         Fut: Future<Output = Result<T>>,
     {
-        let ad = advertisement(data, (!self.unsupported).then_some(self.interval_ms));
+        let ad = advertisement(data, (!self.unsupported).then_some(interval_ms));
         let len = legacy_advertisement_len(&ad).context("unsupported advertising field")?;
         anyhow::ensure!(len <= 31, "legacy advertisement exceeds 31 bytes: {len}");
         let result = register(ad).await;
@@ -68,19 +67,12 @@ impl Advertising {
                 // Remember even if the retry fails, to avoid repeated rejected attempts.
                 self.unsupported = true;
                 tracing::warn!(%error, "advertising intervals rejected; retrying with BlueZ default");
-                register(advertisement(data, None)).await?
+                let handle = register(advertisement(data, None)).await?;
+                tracing::info!("advertising interval: BlueZ default");
+                handle
             }
             result => result?,
         };
-        if !self.logged {
-            if self.unsupported {
-                tracing::info!("advertising interval: BlueZ default");
-            } else {
-                let [min, max] = self.interval_ms;
-                tracing::info!("advertising interval: {min}-{max} ms");
-            }
-            self.logged = true;
-        }
         Ok(handle)
     }
 }
@@ -142,7 +134,7 @@ pub struct Bluez {
     opening: Option<Opening>,
 }
 impl Bluez {
-    pub async fn new(adapter_name: &str, adv_interval_ms: [u16; 2]) -> Self {
+    pub async fn new(adapter_name: &str) -> Self {
         let (write_tx, writes) = mpsc::channel(128);
         let mut this = Self {
             adapter_name: adapter_name.into(),
@@ -151,7 +143,7 @@ impl Bluez {
             writes,
             write_tx,
             advertisement: None,
-            advertising: Advertising::new(adv_interval_ms),
+            advertising: Advertising::new(),
             powered: false,
             retry: tokio::time::interval(Duration::from_secs(2)),
             opening: None,
@@ -261,7 +253,7 @@ impl Transport for Bluez {
     fn powered(&self) -> bool {
         self.powered
     }
-    async fn advertise(&mut self, data: Option<[u8; 9]>) -> Result<()> {
+    async fn advertise(&mut self, data: Option<[u8; 9]>, interval_ms: [u16; 2]) -> Result<()> {
         self.advertisement = None;
         if let Some(data) = data {
             let live = self.live.as_mut().context("no adapter")?;
@@ -271,7 +263,9 @@ impl Transport for Bluez {
             }
             self.advertisement = Some(
                 self.advertising
-                    .register(data, |ad| async { Ok(live.adapter.advertise(ad).await?) })
+                    .register(data, interval_ms, |ad| async {
+                        Ok(live.adapter.advertise(ad).await?)
+                    })
                     .await?,
             );
         }
@@ -408,7 +402,7 @@ mod tests {
             writes,
             write_tx,
             advertisement: None,
-            advertising: Advertising::new([20, 30]),
+            advertising: Advertising::new(),
             powered: false,
             retry,
             opening: Some(Box::pin(async move {
@@ -450,15 +444,21 @@ mod advertisement_tests {
     }
 
     #[tokio::test]
-    async fn accepted_intervals_are_reused() {
-        let mut advertising = Advertising::new([40, 60]);
-        for _ in 0..2 {
+    async fn accepted_intervals_follow_mode_changes() {
+        let mut advertising = Advertising::new();
+        for interval in [[20, 30], [1000, 1200], [20, 30]] {
             let mut attempts = 0;
             advertising
-                .register([0; 9], |ad| {
+                .register([0; 9], interval, |ad| {
                     attempts += 1;
-                    assert_eq!(ad.min_interval, Some(Duration::from_millis(40)));
-                    assert_eq!(ad.max_interval, Some(Duration::from_millis(60)));
+                    assert_eq!(
+                        ad.min_interval,
+                        Some(Duration::from_millis(interval[0].into()))
+                    );
+                    assert_eq!(
+                        ad.max_interval,
+                        Some(Duration::from_millis(interval[1].into()))
+                    );
                     future::ready(Ok(()))
                 })
                 .await
@@ -472,10 +472,10 @@ mod advertisement_tests {
     async fn rejected_intervals_retry_once_and_are_never_attempted_again() {
         // Also retain the decision when registration without intervals fails.
         for fallback_succeeds in [true, false] {
-            let mut advertising = Advertising::new([20, 30]);
+            let mut advertising = Advertising::new();
             let mut attempts = Vec::new();
             let result = advertising
-                .register([7; 9], |ad| {
+                .register([7; 9], [20, 30], |ad| {
                     assert_eq!(ad.service_data.get(&SERVICE), Some(&vec![7; 9]));
                     attempts.push((ad.min_interval, ad.max_interval));
                     future::ready(if ad.min_interval.is_some() || !fallback_succeeds {
@@ -499,7 +499,7 @@ mod advertisement_tests {
             attempts.clear();
             assert!(
                 advertising
-                    .register([0; 9], |ad| {
+                    .register([0; 9], [1000, 1200], |ad| {
                         attempts.push((ad.min_interval, ad.max_interval));
                         future::ready(Err::<(), _>(anyhow::anyhow!("still unavailable")))
                     })

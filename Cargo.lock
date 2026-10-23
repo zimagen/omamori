@@ -775,6 +775,7 @@ dependencies = [
  "libc",
  "omamori-ipc",
  "serde_json",
+ "socket2",
  "tempfile",
 ]
 

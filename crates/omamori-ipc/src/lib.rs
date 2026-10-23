@@ -18,6 +18,7 @@ pub enum Input {
         pid: Option<u32>,
     },
     Status {},
+    Boost {},
     PairBegin {},
     PairConfirm {
         accept: bool,
@@ -38,6 +39,7 @@ pub enum Event {
         id: String,
     },
     Approved,
+    Boosted,
     Unavailable {
         reason: String,
     },
@@ -87,7 +89,8 @@ impl Event {
     pub fn is_terminal(&self) -> bool {
         matches!(
             self,
-            Self::Approved
+            Self::Boosted
+                | Self::Approved
                 | Self::Unavailable { .. }
                 | Self::Denied { .. }
                 | Self::PairDone

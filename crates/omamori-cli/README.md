@@ -8,6 +8,11 @@ watch's code and asks `Do the codes match? [y/N]`; only explicit acceptance
 confirms pairing. `sudo omamori unpair` removes the pairing. Use
 `--socket PATH` with any of these commands to select another daemon socket.
 
+`omamori boost` extends fast BLE advertising for the configured boost window
+(default 30 seconds) when your uid has a pending request; root can boost any
+pending request. It prints nothing and exits 0 on success, or exits 1 with
+the daemon reason on failure. Connection and response timeouts are 200 ms.
+
 `sudo omamori setup-pam` shows a unified diff and asks before adding the
 marked module line after `pam_howdy.so` if present, otherwise before the
 first `auth` or `-auth` line in

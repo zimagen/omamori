@@ -176,3 +176,82 @@ fn unreachable_daemon_is_success_only_for_json_status() {
         }
     }
 }
+
+#[test]
+fn boost_is_quiet_on_success_and_reports_denial() {
+    for success in [true, false] {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("socket");
+        let listener = UnixListener::bind(&path).unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            let mut line = String::new();
+            BufReader::new(socket.try_clone().unwrap())
+                .read_line(&mut line)
+                .unwrap();
+            assert!(matches!(
+                serde_json::from_str::<Input>(&line).unwrap(),
+                Input::Boost {}
+            ));
+            writeln!(
+                socket,
+                "{}",
+                if success {
+                    r#"{"ev":"boosted"}"#
+                } else {
+                    r#"{"ev":"denied","reason":"no-request"}"#
+                }
+            )
+            .unwrap();
+        });
+        let output = Command::new(env!("CARGO_BIN_EXE_omamori"))
+            .arg("--socket")
+            .arg(path)
+            .arg("boost")
+            .output()
+            .unwrap();
+        server.join().unwrap();
+        assert_eq!(output.status.code(), Some(if success { 0 } else { 1 }));
+        assert!(output.stdout.is_empty());
+        if success {
+            assert!(output.stderr.is_empty());
+        } else {
+            assert!(
+                String::from_utf8(output.stderr)
+                    .unwrap()
+                    .contains("no-request")
+            );
+        }
+    }
+}
+
+#[test]
+fn boost_times_out_if_daemon_does_not_reply() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("socket");
+    let listener = UnixListener::bind(&path).unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_omamori"))
+        .arg("--socket")
+        .arg(path)
+        .arg("boost")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let (_socket, _) = listener.accept().unwrap();
+    // The server remains open and silent; the CLI must stop waiting on its own.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    loop {
+        if child.try_wait().unwrap().is_some() {
+            break;
+        }
+        if std::time::Instant::now() >= deadline {
+            child.kill().unwrap();
+            panic!("boost failed to time out");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    let output = child.wait_with_output().unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+}

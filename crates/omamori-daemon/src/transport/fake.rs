@@ -10,13 +10,16 @@ pub struct Fake {
     advertising: watch::Sender<Option<[u8; 9]>>,
     powered: bool,
     pub fail_advertise: bool,
+    intervals: mpsc::UnboundedSender<Option<[u16; 2]>>,
 }
 pub struct Peer {
     pub incoming: mpsc::Sender<Event>,
+    pub intervals: mpsc::UnboundedReceiver<Option<[u16; 2]>>,
     pub outgoing: mpsc::Receiver<Vec<u8>>,
     pub advertising: watch::Receiver<Option<[u8; 9]>>,
 }
 pub fn pair() -> (Fake, Peer) {
+    let (intervals, interval_rx) = mpsc::unbounded_channel();
     let (tx, rx) = mpsc::channel(256);
     let (out, incoming) = mpsc::channel(256);
     let (advertising, adv) = watch::channel(None);
@@ -27,9 +30,11 @@ pub fn pair() -> (Fake, Peer) {
             advertising,
             powered: true,
             fail_advertise: false,
+            intervals,
         },
         Peer {
             incoming: tx,
+            intervals: interval_rx,
             outgoing: incoming,
             advertising: adv,
         },
@@ -40,7 +45,8 @@ impl Transport for Fake {
     fn powered(&self) -> bool {
         self.powered
     }
-    async fn advertise(&mut self, data: Option<[u8; 9]>) -> Result<()> {
+    async fn advertise(&mut self, data: Option<[u8; 9]>, interval_ms: [u16; 2]) -> Result<()> {
+        let _ = self.intervals.send(data.map(|_| interval_ms));
         self.advertising.send_replace(None);
         if data.is_some() && self.fail_advertise {
             return Err(anyhow!("simulated BlueZ registration failure"));

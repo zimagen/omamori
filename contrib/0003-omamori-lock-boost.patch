@@ -1,0 +1,44 @@
+From 3a038ecde554d81074b4d75815f2d22623fce3a7 Mon Sep 17 00:00:00 2001
+From: zimagen <zimagen@users.noreply.github.com>
+Date: Fri, 23 Oct 2026 06:34:20 +0000
+Subject: [PATCH] Local: boost omamori advertising when the lock screen wakes
+
+---
+ shell/plugins/lock/Service.qml | 14 ++++++++++++++
+ 1 file changed, 14 insertions(+)
+
+diff --git a/shell/plugins/lock/Service.qml b/shell/plugins/lock/Service.qml
+index 7060b072..1f597bb4 100644
+--- a/shell/plugins/lock/Service.qml
++++ b/shell/plugins/lock/Service.qml
+@@ -291,6 +291,15 @@ Item {
+     resumeFingerprint()
+     nudgeFingerprint()
+     requestFace()
++    boostWatch()
++  }
++
++  // Ask omamorid for another short burst of fast advertising, so a watch
++  // tapped right after the user comes back finds the PC quickly. Cheap and
++  // fire-and-forget; omamorid ignores it unless our request is pending.
++  function boostWatch() {
++    if (!lockRequested || !watchConfigured || !watchAuthenticating) return
++    if (!watchBoostProcess.running) watchBoostProcess.running = true
+   }
+ 
+   // An attempt already running is left to finish under its own timeouts, so
+@@ -862,6 +871,11 @@ Item {
+     onTriggered: root.timeoutFaceReach()
+   }
+ 
++  Process {
++    id: watchBoostProcess
++    command: ["omamori", "boost"]
++  }
++
+   Timer {
+     id: watchRetryTimer
+     interval: 5000
+-- 
+2.47.3
+

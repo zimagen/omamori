@@ -34,7 +34,7 @@ async fn main() -> Result<()> {
     let mut fake_peer = None;
     let mut daemon = match args.transport {
         Transport::Bluez => {
-            let transport = Bluez::new(&config.adapter, config.adv_interval_ms).await;
+            let transport = Bluez::new(&config.adapter).await;
             omamori_daemon::start(
                 config,
                 &args.state_dir,

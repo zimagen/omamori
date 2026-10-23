@@ -51,7 +51,9 @@ config.toml:
 approval = "per-type"   # "per-type" (lock = auto, sudo = confirm on watch) | "auto"
 host_name = ""          # empty = hostname
 adapter = ""            # empty = default BlueZ adapter
-adv_interval_ms = [20, 30] # min/max, each 20..=10240 ms, min <= max
+adv_interval_ms = [20, 30] # fast min/max, each 20..=10240 ms, min <= max
+adv_slow_interval_ms = [1000, 1200] # same validation as the fast interval
+adv_boost_secs = 30 # 1..=600 seconds
 sudo = true
 lock = true
 ```
@@ -103,11 +105,20 @@ The PC is the GATT peripheral (Connect IQ is central-only).
   (bit0 = pairing mode). The watch selects its stored key by that prefix.
   Advertising data contains only the service-data AD for the service UUID
   (30 bytes incl. flags); the UUID is not listed separately.
-  Advertising intervals default to 20–30 ms, configurable with
-  `adv_interval_ms`. These parameters do not consume advertising payload bytes.
+  Advertising uses `adv_interval_ms` (default 20–30 ms) for
+  `adv_boost_secs` (default 30 s) after a new request, pairing begins, or an
+  authorized `omamori boost`; repeated boosts extend the window. Otherwise it
+  uses `adv_slow_interval_ms` (default 1000–1200 ms). Pairing stays fast for its
+  whole duration. Interval changes drop and re-register the advertisement,
+  deferred while a central is connected. These parameters consume no payload bytes.
+  IPC `{"op":"boost"}` accepts any uid with a pending request (root: any
+  pending request), replying `{"ev":"boosted"}` or
+  `{"ev":"denied","reason":"no-request"}`. The CLI is silent on success and
+  uses a 200 ms connection timeout.
   If BlueZ rejects registration with intervals, the daemon warns and retries
   once using BlueZ defaults, remembering this fallback until restart. It logs
-  the selected interval mode once; BlueZ may silently ignore interval settings.
+  the fallback once and each fast/slow registration with its configured ms values;
+  both modes use BlueZ defaults after fallback. BlueZ may silently ignore settings.
   In authentication mode, the watch connects immediately when its only saved
   host is discovered. With multiple saved hosts, or in pairing mode, it collects
   candidates for 1200 ms before connecting or showing the host chooser.

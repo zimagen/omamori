@@ -18,6 +18,10 @@ pub struct Config {
     pub adapter: String,
     #[serde(deserialize_with = "deserialize_adv_interval")]
     pub adv_interval_ms: [u16; 2],
+    #[serde(deserialize_with = "deserialize_adv_interval")]
+    pub adv_slow_interval_ms: [u16; 2],
+    #[serde(deserialize_with = "deserialize_boost_secs")]
+    pub adv_boost_secs: u16,
     pub sudo: bool,
     pub lock: bool,
 }
@@ -28,6 +32,8 @@ impl Default for Config {
             host_name: String::new(),
             adapter: String::new(),
             adv_interval_ms: [20, 30],
+            adv_slow_interval_ms: [1000, 1200],
+            adv_boost_secs: 30,
             sudo: true,
             lock: true,
         }
@@ -49,6 +55,18 @@ where
     }
     Ok([values[0] as u16, values[1] as u16])
 }
+fn deserialize_boost_secs<'de, D>(deserializer: D) -> std::result::Result<u16, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = u16::deserialize(deserializer)?;
+    if !(1..=600).contains(&value) {
+        return Err(serde::de::Error::custom(
+            "adv_boost_secs must be in 1..=600",
+        ));
+    }
+    Ok(value)
+}
 impl Config {
     pub fn load(path: &Path) -> Result<Self> {
         let mut config: Self = match fs::read_to_string(path) {
@@ -69,6 +87,42 @@ impl Config {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn slow_interval_and_boost_validation() {
+        let defaults: Config = toml::from_str("").unwrap();
+        assert_eq!(defaults.adv_slow_interval_ms, [1000, 1200]);
+        assert_eq!(defaults.adv_boost_secs, 30);
+        for interval in ["[20, 10240]", "[1000, 1200]", "[30, 30]"] {
+            assert!(
+                toml::from_str::<Config>(&format!("adv_slow_interval_ms = {interval}")).is_ok()
+            );
+        }
+        for interval in [
+            "[19, 30]",
+            "[20, 10241]",
+            "[30, 20]",
+            "[20]",
+            "[20, 30, 40]",
+            "[-1, 30]",
+            "[20.0, 30]",
+        ] {
+            assert!(
+                toml::from_str::<Config>(&format!("adv_slow_interval_ms = {interval}")).is_err()
+            );
+        }
+        for seconds in [1, 30, 600] {
+            assert_eq!(
+                toml::from_str::<Config>(&format!("adv_boost_secs = {seconds}"))
+                    .unwrap()
+                    .adv_boost_secs,
+                seconds
+            );
+        }
+        for seconds in ["0", "601", "-1", "1.5", "\"30\""] {
+            assert!(toml::from_str::<Config>(&format!("adv_boost_secs = {seconds}")).is_err());
+        }
+    }
 
     #[test]
     fn advertising_interval_defaults_and_valid_values() {
