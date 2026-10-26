@@ -27,6 +27,16 @@ To regenerate the committed fixture constants after a fixture update:
 python3 watch/tools/generate_vectors.py
 ```
 
+## Display
+
+The main view uses square-dot text and charm/request icons on a near-black
+background. The shared palette and compact 5x7 font live in `source/Pixel.mc`.
+The font covers printable ASCII plus bullet, em dash and ellipsis; lines with
+other characters use the system XTINY font, measured with that same renderer.
+Title and full detail wrap into pages inside the round screen; the pairing
+code stays large above the paged host name and comparison prompt. Footers and
+timing use smaller dots. Menus use the standard system Menu2 controls.
+
 ## Install and use
 
 Connect the watch over USB, open its storage using an MTP file manager, and
